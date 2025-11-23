@@ -1,0 +1,8 @@
+flask
+google-generativeai
+mediapipe
+numpy
+pandas
+opencv-python
+python-dotenv
+requests

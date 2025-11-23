@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Body Part Tracker</title>
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='style.css') }}"
+    />
+  </head>
+  <body>
+    <h1>Body Part Tracker</h1>
+
+    <div class="video-container">
+      <!-- This video element captures the local webcam feed but is not displayed -->
+      <video
+        id="localVideo"
+        autoplay
+        playsinline
+        muted
+        style="display: none"
+      ></video>
+      <!-- This img element displays the processed video feed from the server -->
+      <img
+        id="processedFeed"
+        src="{{ url_for('video_feed') }}"
+        alt="Video feed"
+      />
+    </div>
+
+    <div class="controls">
+      <label for="exerciseDescription">Describe your exercise:</label>
+      <textarea
+        id="exerciseDescription"
+        rows="2"
+        placeholder="e.g., 'I am doing bicep curls' or 'I am doing squats'"
+      ></textarea>
+      <button id="startStopBtn" type="button">Start Tracking</button>
+      <p id="status">Status: Idle</p>
+      <div id="analysisResult" class="analysis-result"></div>
+    </div>
+
+    <div class="advanced-controls controls">
+      <button id="togglePromptsBtn" type="button">
+        Show Advanced Settings
+      </button>
+      <div id="promptContainer" style="display: none; margin-top: 15px">
+        <label for="repPrompt">Prompt 1:</label>
+        <textarea id="repPrompt" rows="8"></textarea>
+        <label for="formPrompt">Prompt 2:</label>
+        <textarea id="formPrompt" rows="12"></textarea>
+      </div>
+    </div>
+
+    <script>
+      const startStopBtn = document.getElementById("startStopBtn");
+      const statusEl = document.getElementById("status");
+      const analysisResultEl = document.getElementById("analysisResult");
+      const togglePromptsBtn = document.getElementById("togglePromptsBtn");
+      const promptContainer = document.getElementById("promptContainer");
+      const repPromptEl = document.getElementById("repPrompt");
+      const formPromptEl = document.getElementById("formPrompt");
+
+      let isTracking = false;
+      let videoStream; // To hold the video stream
+      let animationFrameId; // To control the frame sending loop
+
+      const defaultRepPrompt = `
+Based on the following time-series JSON data of body pose landmarks, count the number of repetitions for the following exercise: '{user_description}'.
+A single repetition is one full cycle of the main movement. Be lenient in your counting.
+
+Your response should be ONLY the integer number of repetitions and nothing else. For example: 8
+
+**JSON Landmark Data:**
+\`\`\`json
+{truncated_json_data}
+\`\`\`
+`.trim();
+
+      const defaultFormPrompt = `
+You are an expert AI fitness coach. Your task is to analyze my performance of the following exercise: '{user_description}'.
+Use the provided pose landmark data from my workout session.
+
+**Instructions:**
+Analyze the provided data and return a JSON object with the following structure. Do not include any text or markdown formatting outside of the JSON object itself.
+
+{% raw %}{{
+  "form_correctness": "<string: Evaluate my form, symmetry, and range of motion for this specific exercise.>",
+  "speed_pacing": "<string: Analyze the consistency and appropriateness of my movement speed.>",
+  "corrective_feedback": "<string: Provide clear, actionable feedback on mistakes and how to improve my form.>",
+  "overall_summary": "<string: A brief summary of my performance.>"
+}}{% endraw %}
+
+**JSON Landmark Data:**
+\`\`\`json
+{truncated_json_data}
+\`\`\`
+`.trim();
+
+      repPromptEl.value = defaultRepPrompt;
+      formPromptEl.value = defaultFormPrompt;
+
+      /**
+       * Starts the camera and begins sending frames to the server.
+       */
+      async function startCamera() {
+        if (videoStream) return; // Camera is already running
+
+        try {
+          const video = document.getElementById("localVideo");
+          videoStream = await navigator.mediaDevices.getUserMedia({
+            video: { width: 640, height: 480 },
+          });
+          video.srcObject = videoStream;
+          await video.play(); // Ensure video is playing before we start capturing
+
+          const canvas = document.createElement("canvas");
+          const ctx = canvas.getContext("2d");
+
+          async function sendFrame() {
+            if (!videoStream) return; // Stop if stream is gone
+
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            // Flip the image horizontally to mirror the user's view
+            ctx.translate(canvas.width, 0);
+            ctx.scale(-1, 1);
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset transform
+
+            canvas.toBlob(
+              (blob) => {
+                if (!blob) return;
+                const formData = new FormData();
+                formData.append("frame", blob, "frame.jpg");
+
+                // Send the frame without waiting for a response
+                fetch("/upload_frame", {
+                  method: "POST",
+                  body: formData,
+                }).catch((err) => {
+                  console.error("Frame upload failed:", err);
+                  // Optionally stop the camera on repeated failures
+                });
+              },
+              "image/jpeg",
+              0.7 // Image quality
+            );
+
+            animationFrameId = requestAnimationFrame(sendFrame);
+          }
+
+          sendFrame();
+          setStatus("Camera started. Streaming to server.");
+        } catch (err) {
+          console.error("Camera access error:", err);
+          let errorMessage = `Could not access the camera. Please ensure you have a webcam and have granted permission.`;
+          if (
+            window.location.protocol !== "https:" &&
+            window.location.hostname !== "localhost"
+          ) {
+            errorMessage += `<br><br><strong>Important:</strong> Most browsers require a secure (HTTPS) connection to access the camera.`;
+          }
+          setStatus(errorMessage, true);
+          // Remove the alert
+        }
+      }
+
+      function setStatus(text, isError = false) {
+        // Use innerHTML to allow for the <br> tag
+        statusEl.innerHTML = "Status: " + text;
+        statusEl.className = isError ? "error" : "info";
+      }
+
+      function updateButtonState() {
+        startStopBtn.textContent = isTracking
+          ? "Stop & Analyze"
+          : "Start Tracking";
+        startStopBtn.disabled = false;
+      }
+
+      async function startTracking() {
+        setStatus("Starting...");
+        analysisResultEl.innerHTML = ""; // Clear previous results
+        try {
+          const response = await fetch("/start_tracking", { method: "POST" });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || "Failed to start");
+
+          isTracking = true;
+          setStatus(data.status || "Tracking...");
+        } catch (error) {
+          setStatus(error.message, true);
+        } finally {
+          updateButtonState();
+        }
+      }
+
+      async function stopAndAnalyze() {
+        setStatus("Stopping...");
+        try {
+          // 1. Stop tracking on the server
+          const stopResponse = await fetch("/stop_tracking", {
+            method: "POST",
+          });
+          const stopData = await stopResponse.json();
+          if (!stopResponse.ok)
+            throw new Error(stopData.error || "Failed to stop");
+
+          isTracking = false;
+          setStatus("Stopped. Analyzing exercise...");
+          analysisResultEl.innerHTML = `<div class="loader"></div>Analyzing...`;
+
+          // Get the exercise description from the new textbox
+          const exerciseDescription = document.getElementById(
+            "exerciseDescription"
+          ).value;
+          const repPrompt = repPromptEl.value;
+          const formPrompt = formPromptEl.value;
+
+          // 2. Analyze the exercise
+          const startTime = performance.now();
+          try {
+            const analysisResponse = await fetch("/analyze_exercise", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                description: exerciseDescription,
+                rep_prompt: repPrompt,
+                form_prompt: formPrompt,
+              }), // Send description and prompts in the body
+            });
+            const analysisData = await analysisResponse.json(); // This now contains the JSON object
+            const duration = ((performance.now() - startTime) / 1000).toFixed(
+              2
+            );
+
+            if (analysisResponse.ok) {
+              // Format the JSON data into HTML
+              let html = `<h4>Analysis Results <span style="font-size: 12px; color: #555; font-weight: normal;">(${duration}s)</span></h4>`;
+
+              // Check if the model response was a valid JSON or raw text
+              if (analysisData.error) {
+                html += `<p><strong>Repetition Count:</strong> ${analysisData.repetition_count}</p>`;
+                html += `<p class="error"><strong>Analysis Error:</strong> ${analysisData.error}</p>`;
+                html += `<p><strong>Model's Raw Response:</strong></p>`;
+                html += `<pre class="raw-response">${analysisData.raw_response}</pre>`;
+              } else {
+                html += `<p><strong>Repetition Count:</strong> ${analysisData.repetition_count}</p>`;
+                html += `<p><strong>Form & Correctness:</strong> ${analysisData.form_correctness}</p>`;
+                html += `<p><strong>Speed & Pacing:</strong> ${analysisData.speed_pacing}</p>`;
+                html += `<p><strong>Corrective Feedback:</strong> ${analysisData.corrective_feedback}</p>`;
+                html += `<p><strong>Overall Summary:</strong> ${analysisData.overall_summary}</p>`;
+              }
+
+              analysisResultEl.innerHTML = html;
+              setStatus("Analysis complete.");
+            } else {
+              throw new Error(analysisData.error || "Analysis failed");
+            }
+          } catch (analysisError) {
+            analysisResultEl.innerHTML = `<span class="error">Analysis failed: ${analysisError.message}</span>`;
+            setStatus("Analysis failed.", true);
+          }
+        } catch (error) {
+          setStatus(error.message, true);
+        } finally {
+          updateButtonState();
+        }
+      }
+
+      startStopBtn.addEventListener("click", () => {
+        startStopBtn.disabled = true;
+        if (isTracking) {
+          stopAndAnalyze();
+        } else {
+          startTracking();
+        }
+      });
+
+      togglePromptsBtn.addEventListener("click", () => {
+        const isHidden = promptContainer.style.display === "none";
+        promptContainer.style.display = isHidden ? "block" : "none";
+        togglePromptsBtn.textContent = isHidden
+          ? "Hide Advanced Settings"
+          : "Show Advanced Settings";
+      });
+
+      // --- Initial state ---
+      // Start the camera as soon as the page loads
+      window.addEventListener("load", startCamera);
+      updateButtonState();
+    </script>
+  </body>
+</html>
