@@ -9,6 +9,8 @@ import json
 from queue import Queue, Empty
 from dotenv import load_dotenv
 import google.generativeai as genai
+import uuid
+import tempfile
 from flask import (
     Flask,
     render_template,
@@ -55,12 +57,17 @@ app = Flask(
     static_folder="data/static",
 )
 
+# Create a temporary directory for session data
+TEMP_DIR = tempfile.mkdtemp(prefix="pose_data_")
+print(f"[app] Storing temporary session files in: {TEMP_DIR}")
+
 class AppState:
     def __init__(self):
         self.tracking_enabled = False
-        self.pose_rows = []
         self.latest_processed_jpeg = None
         self.lock = threading.Lock()
+        self.current_session_uid = None
+        self.current_session_file_path = None
 
 STATE = AppState()
 frame_queue = Queue(maxsize=2) # Increased queue size for smoother streaming
@@ -116,7 +123,7 @@ def pose_processor_worker():
                 )
                 
                 with STATE.lock:
-                    if STATE.tracking_enabled:
+                    if STATE.tracking_enabled and STATE.current_session_file_path:
                         # Record data for every processed frame without a delay
                         ts = datetime.now().isoformat()
                         row = {"timestamp": ts}
@@ -127,7 +134,13 @@ def pose_processor_worker():
                                     row[landmark_name] = None
                                 else:
                                     row[landmark_name] = f"{lm.x:.4f},{lm.y:.4f},{lm.z:.4f}"
-                        STATE.pose_rows.append(row)
+                        
+                        # Append as a JSON line to the session file
+                        try:
+                            with open(STATE.current_session_file_path, "a") as f:
+                                f.write(json.dumps(row) + "\n")
+                        except Exception as e:
+                            print(f"[pose_processor] Error writing to file: {e}")
 
         ret, buffer = cv2.imencode(".jpg", frame)
         if ret:
@@ -182,58 +195,82 @@ def upload_frame():
 @app.route("/start_tracking", methods=["POST"])
 def start_tracking():
     with STATE.lock:
-        STATE.pose_rows = []
+        session_uid = str(uuid.uuid4())
+        session_file_path = os.path.join(TEMP_DIR, f"{session_uid}.jsonl")
+
+        STATE.current_session_uid = session_uid
+        STATE.current_session_file_path = session_file_path
         STATE.tracking_enabled = True
+        
+        # Create the file
+        with open(session_file_path, "w") as f:
+            pass # Create an empty file
+
     status_msg = "Tracking started. Recording data continuously."
-    print(f"[tracking] {status_msg}", flush=True)
-    return jsonify({"status": status_msg})
+    print(f"[tracking] {status_msg} Session: {session_uid}", flush=True)
+    return jsonify({"status": status_msg, "session_uid": session_uid})
 
 @app.route("/stop_tracking", methods=["POST"])
 def stop_tracking():
+    session_uid = None
     with STATE.lock:
         STATE.tracking_enabled = False
-        num_rows = len(STATE.pose_rows)
-    print(f"[tracking] Stopped. Collected {num_rows} data points.", flush=True)
-    return jsonify({"status": f"Tracking stopped. Collected {num_rows} data points."})
+        session_uid = STATE.current_session_uid
+        STATE.current_session_uid = None
+        STATE.current_session_file_path = None
+
+    if session_uid:
+        print(f"[tracking] Stopped session: {session_uid}", flush=True)
+        return jsonify({"status": f"Tracking stopped for session {session_uid}."})
+    else:
+        return jsonify({"status": "Tracking was not active."})
 
 @app.route("/analyze_exercise", methods=["POST"])
 def analyze_exercise():
-    with STATE.lock:
-        if not STATE.pose_rows:
-            return jsonify({"error": "No data to analyze."}), 400
-        rows_copy = list(STATE.pose_rows)
+    request_data = request.get_json()
+    if not request_data:
+        return jsonify({"error": "Invalid request."}), 400
 
+    session_uid = request_data.get("session_uid")
+    if not session_uid:
+        return jsonify({"error": "No session_uid provided."}), 400
+
+    session_file_path = os.path.join(TEMP_DIR, f"{session_uid}.jsonl")
+
+    if not os.path.exists(session_file_path):
+        return jsonify({"error": "Session data not found. It may have been analyzed already."}), 404
+
+    pose_rows = []
     try:
+        with open(session_file_path, "r") as f:
+            for line in f:
+                pose_rows.append(json.loads(line))
+        
+        if not pose_rows:
+            return jsonify({"error": "No data to analyze."}), 400
+
         # Get the user's exercise description from the request
-        request_data = request.get_json()
         user_description = request_data.get("description", "an exercise").strip()
         if not user_description:
             user_description = "an exercise"  # Fallback if description is empty
 
         # Prepare and truncate the data once for both prompts
-        json_data = json.dumps(rows_copy, indent=2)
+        json_data = json.dumps(pose_rows, indent=2)
         truncated_json_data = json_data[:30000]
 
         # --- Define Default Prompts ---
-        default_rep_prompt = """
-Based on the following time-series JSON data of body pose landmarks, count the number of repetitions for the following exercise: '{user_description}'.
-A single repetition is one full cycle of the main movement. Be lenient in your counting.
+        # This prompt is now deprecated as we will use a single combined prompt.
+        # default_rep_prompt = """..."""
 
-Your response should be ONLY the integer number of repetitions and nothing else. For example: 8
-
-**JSON Landmark Data:**
-```json
-{truncated_json_data}
-```
-"""
-        default_form_prompt = """
+        default_combined_prompt = """
 You are an expert AI fitness coach. Your task is to analyze my performance of the following exercise: '{user_description}'.
-Use the provided pose landmark data from my workout session.
+Use the provided time-series JSON data of my body pose landmarks.
 
 **Instructions:**
-Analyze the provided data and return a JSON object with the following structure. Do not include any text or markdown formatting outside of the JSON object itself.
+Analyze the provided data and return a single JSON object with the following structure. Do not include any text or markdown formatting outside of the JSON object itself.
 
 {{
+  "repetition_count": "<integer: Count the number of full repetitions. Be lenient in your counting.>",
   "form_correctness": "<string: Evaluate my form, symmetry, and range of motion for this specific exercise.>",
   "speed_pacing": "<string: Analyze the consistency and appropriateness of my movement speed.>",
   "corrective_feedback": "<string: Provide clear, actionable feedback on mistakes and how to improve my form.>",
@@ -246,35 +283,19 @@ Analyze the provided data and return a JSON object with the following structure.
 ```
 """
         # Get prompts from request or use defaults
-        rep_prompt_template = request_data.get("rep_prompt", default_rep_prompt)
-        form_prompt_template = request_data.get("form_prompt", default_form_prompt)
+        # rep_prompt_template is no longer used.
+        form_prompt_template = request_data.get("form_prompt", default_combined_prompt)
 
-        # --- PROMPT 1: Repetition Counting ---
-        rep_prompt = rep_prompt_template.format(
+        # --- PROMPT: Combined Analysis ---
+        combined_prompt = form_prompt_template.format(
             user_description=user_description,
             truncated_json_data=truncated_json_data
         )
         
-        rep_response = gemini_model.generate_content(rep_prompt)
-        rep_count = 0
-        try:
-            # Extract the integer from the response, defaulting to 0 on failure
-            rep_count = int(rep_response.text.strip())
-        except (ValueError, TypeError):
-            print(f"[gemini] Warning: Could not parse rep count from response: '{rep_response.text.strip()}'")
-        
-        print(f"[gemini] Rep count result: {rep_count}")
-
-        # --- PROMPT 2: Form Analysis ---
-        form_prompt = form_prompt_template.format(
-            user_description=user_description,
-            truncated_json_data=truncated_json_data
-        )
-
-        form_response = gemini_model.generate_content(form_prompt)
+        response = gemini_model.generate_content(combined_prompt)
         
         # Clean up the response to ensure it's a valid JSON string
-        analysis_text = form_response.text.strip()
+        analysis_text = response.text.strip()
         
         analysis_json = {}
         try:
@@ -286,18 +307,18 @@ Analyze the provided data and return a JSON object with the following structure.
             
             clean_json_str = analysis_text[json_start:json_end]
             analysis_json = json.loads(clean_json_str)
+
+            # Ensure rep_count is an integer, default to 0 if missing or invalid
+            analysis_json['repetition_count'] = int(analysis_json.get('repetition_count', 0))
             
-        except (json.JSONDecodeError, ValueError) as e:
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
             # If parsing fails, create a fallback object with the raw text
-            print(f"[gemini] Warning: Could not parse form analysis JSON. Error: {e}")
+            print(f"[gemini] Warning: Could not parse combined analysis JSON. Error: {e}")
             analysis_json = {
                 "error": "The model did not return a valid JSON object.",
-                "raw_response": analysis_text
+                "raw_response": analysis_text,
+                "repetition_count": 0 # Provide a default for the UI
             }
-        
-        # --- Combine Results ---
-        # Add the rep count from the first prompt to the analysis from the second
-        analysis_json['repetition_count'] = rep_count
         
         print(f"[gemini] Combined analysis result: {analysis_json}")
         # Return the final combined JSON object
@@ -306,27 +327,22 @@ Analyze the provided data and return a JSON object with the following structure.
     except Exception as e:
         print(f"[gemini] Error during analysis: {e}")
         return jsonify({"error": f"An error occurred during analysis: {e}"}), 500
+    finally:
+        # --- Cleanup ---
+        # Delete the temporary file after analysis is attempted
+        if os.path.exists(session_file_path):
+            try:
+                os.remove(session_file_path)
+                print(f"[cleanup] Deleted temporary file: {session_file_path}")
+            except OSError as e:
+                print(f"[cleanup] Error deleting file {session_file_path}: {e}")
 
 
 @app.route("/save_json")
 def save_json():
-    with STATE.lock:
-        if not STATE.pose_rows:
-            return jsonify({"error": "No data was collected. Try tracking for a longer duration."}), 400
-        # Create a copy to work with outside the lock
-        rows_copy = list(STATE.pose_rows)
-
-    # Convert the list of dictionaries to a JSON string
-    json_data = json.dumps(rows_copy, indent=4)
-    
-    filename = datetime.now().strftime("pose_data_%Y%m%d_%H%M%S.json")
-    
-    # Return the JSON data as a file download
-    return Response(
-        json_data,
-        mimetype='application/json',
-        headers={'Content-Disposition': f'attachment;filename={filename}'}
-    )
+    # This endpoint is now deprecated as data is deleted after analysis.
+    # You could adapt it to take a session_uid before it's analyzed.
+    return jsonify({"error": "This endpoint is deprecated. Data is deleted after analysis."}), 410
 
 if __name__ == "__main__":
     model_path = 'pose_landmarker_lite.task'

@@ -64,7 +64,9 @@
       let isTracking = false;
       let videoStream; // To hold the video stream
       let animationFrameId; // To control the frame sending loop
+      let currentSessionUID = null; // To hold the session UID from the server
 
+      // This prompt is no longer sent to the server but is kept for reference
       const defaultRepPrompt = `
 Based on the following time-series JSON data of body pose landmarks, count the number of repetitions for the following exercise: '{user_description}'.
 A single repetition is one full cycle of the main movement. Be lenient in your counting.
@@ -82,9 +84,10 @@ You are an expert AI fitness coach. Your task is to analyze my performance of th
 Use the provided pose landmark data from my workout session.
 
 **Instructions:**
-Analyze the provided data and return a JSON object with the following structure. Do not include any text or markdown formatting outside of the JSON object itself.
+Analyze the provided data and return a single JSON object with the following structure. Do not include any text or markdown formatting outside of the JSON object itself.
 
 {% raw %}{{
+  "repetition_count": "<integer: Count the number of full repetitions. Be lenient in your counting.>",
   "form_correctness": "<string: Evaluate my form, symmetry, and range of motion for this specific exercise.>",
   "speed_pacing": "<string: Analyze the consistency and appropriateness of my movement speed.>",
   "corrective_feedback": "<string: Provide clear, actionable feedback on mistakes and how to improve my form.>",
@@ -97,8 +100,13 @@ Analyze the provided data and return a JSON object with the following structure.
 \`\`\`
 `.trim();
 
-      repPromptEl.value = defaultRepPrompt;
+      // Hide the now-unused rep prompt and its label
+      repPromptEl.style.display = "none";
+      document.querySelector('label[for="repPrompt"]').style.display = "none";
       formPromptEl.value = defaultFormPrompt;
+      // Update the label for the remaining prompt
+      document.querySelector('label[for="formPrompt"]').textContent =
+        "Analysis Prompt:";
 
       /**
        * Starts the camera and begins sending frames to the server.
@@ -116,16 +124,29 @@ Analyze the provided data and return a JSON object with the following structure.
 
           const canvas = document.createElement("canvas");
           const ctx = canvas.getContext("2d");
+          let lastFrameTime = 0;
+          const frameInterval = 1000 / 15; // Target ~15 FPS
 
-          async function sendFrame() {
+          async function sendFrame(timestamp) {
             if (!videoStream) return; // Stop if stream is gone
 
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
+            animationFrameId = requestAnimationFrame(sendFrame); // Keep the loop going
+
+            if (timestamp - lastFrameTime < frameInterval) {
+              return; // Skip this frame to throttle FPS
+            }
+            lastFrameTime = timestamp;
+
+            // Reduce resolution by 50%
+            const newWidth = video.videoWidth / 2;
+            const newHeight = video.videoHeight / 2;
+            canvas.width = newWidth;
+            canvas.height = newHeight;
+
             // Flip the image horizontally to mirror the user's view
-            ctx.translate(canvas.width, 0);
+            ctx.translate(newWidth, 0);
             ctx.scale(-1, 1);
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            ctx.drawImage(video, 0, 0, newWidth, newHeight);
             ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset transform
 
             canvas.toBlob(
@@ -147,7 +168,7 @@ Analyze the provided data and return a JSON object with the following structure.
               0.7 // Image quality
             );
 
-            animationFrameId = requestAnimationFrame(sendFrame);
+            // animationFrameId = requestAnimationFrame(sendFrame);
           }
 
           sendFrame();
@@ -188,6 +209,7 @@ Analyze the provided data and return a JSON object with the following structure.
           if (!response.ok) throw new Error(data.error || "Failed to start");
 
           isTracking = true;
+          currentSessionUID = data.session_uid; // Save the session UID
           setStatus(data.status || "Tracking...");
         } catch (error) {
           setStatus(error.message, true);
@@ -215,7 +237,7 @@ Analyze the provided data and return a JSON object with the following structure.
           const exerciseDescription = document.getElementById(
             "exerciseDescription"
           ).value;
-          const repPrompt = repPromptEl.value;
+          const repPrompt = repPromptEl.value; // This is no longer used by the backend
           const formPrompt = formPromptEl.value;
 
           // 2. Analyze the exercise
@@ -227,8 +249,9 @@ Analyze the provided data and return a JSON object with the following structure.
                 "Content-Type": "application/json",
               },
               body: JSON.stringify({
+                session_uid: currentSessionUID, // Send the session UID
                 description: exerciseDescription,
-                rep_prompt: repPrompt,
+                rep_prompt: repPrompt, // Kept for compatibility, but ignored
                 form_prompt: formPrompt,
               }), // Send description and prompts in the body
             });
@@ -267,6 +290,7 @@ Analyze the provided data and return a JSON object with the following structure.
         } catch (error) {
           setStatus(error.message, true);
         } finally {
+          currentSessionUID = null; // Clear the session UID
           updateButtonState();
         }
       }
