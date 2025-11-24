@@ -7,25 +7,15 @@
       rel="stylesheet"
       href="{{ url_for('static', filename='style.css') }}"
     />
+    <!-- 1. MediaPipe script is no longer needed here, it will be imported directly in the module script -->
   </head>
   <body>
     <h1>Body Part Tracker</h1>
 
     <div class="video-container">
-      <!-- This video element captures the local webcam feed but is not displayed -->
-      <video
-        id="localVideo"
-        autoplay
-        playsinline
-        muted
-        style="display: none"
-      ></video>
-      <!-- This img element displays the processed video feed from the server -->
-      <img
-        id="processedFeed"
-        src="{{ url_for('video_feed') }}"
-        alt="Video feed"
-      />
+      <!-- 2. Video and Canvas are now the main display -->
+      <video id="webcam" autoplay playsinline muted></video>
+      <canvas id="output_canvas" class="output_canvas"></canvas>
     </div>
 
     <div class="controls">
@@ -45,150 +35,247 @@
         Show Advanced Settings
       </button>
       <div id="promptContainer" style="display: none; margin-top: 15px">
-        <label for="repPrompt">Prompt 1:</label>
-        <textarea id="repPrompt" rows="8"></textarea>
-        <label for="formPrompt">Prompt 2:</label>
+        <label for="formPrompt">Analysis Prompt:</label>
         <textarea id="formPrompt" rows="12"></textarea>
       </div>
     </div>
 
-    <script>
+    <script type="module">
+      // 3. Import necessary components directly from the MediaPipe CDN
+      import {
+        PoseLandmarker,
+        FilesetResolver,
+        DrawingUtils,
+      } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.12";
+
       const startStopBtn = document.getElementById("startStopBtn");
       const statusEl = document.getElementById("status");
       const analysisResultEl = document.getElementById("analysisResult");
       const togglePromptsBtn = document.getElementById("togglePromptsBtn");
       const promptContainer = document.getElementById("promptContainer");
-      const repPromptEl = document.getElementById("repPrompt");
       const formPromptEl = document.getElementById("formPrompt");
+      const video = document.getElementById("webcam");
+      const canvasElement = document.getElementById("output_canvas");
+      const canvasCtx = canvasElement.getContext("2d");
+
+      // The DrawingUtils constructor now takes the canvas context directly.
+      const drawingUtils = new DrawingUtils(canvasCtx);
+
+      // --- Constants for Landmark Processing ---
+      const LANDMARK_NAMES = [
+        "nose",
+        "left_eye_inner",
+        "left_eye",
+        "left_eye_outer",
+        "right_eye_inner",
+        "right_eye",
+        "right_eye_outer",
+        "left_ear",
+        "right_ear",
+        "mouth_left",
+        "mouth_right",
+        "left_shoulder",
+        "right_shoulder",
+        "left_elbow",
+        "right_elbow",
+        "left_wrist",
+        "right_wrist",
+        "left_pinky",
+        "right_pinky",
+        "left_index",
+        "right_index",
+        "left_thumb",
+        "right_thumb",
+        "left_hip",
+        "right_hip",
+        "left_knee",
+        "right_knee",
+        "left_ankle",
+        "right_ankle",
+        "left_heel",
+        "right_heel",
+        "left_foot_index",
+        "right_foot_index",
+      ];
+
+      // Select only the most important landmarks for exercise analysis
+      const IMPORTANT_LANDMARKS = [
+        "nose",
+        "left_shoulder",
+        "right_shoulder",
+        "left_elbow",
+        "right_elbow",
+        "left_wrist",
+        "right_wrist",
+        "left_hip",
+        "right_hip",
+        "left_knee",
+        "right_knee",
+        "left_ankle",
+        "right_ankle",
+      ];
 
       let isTracking = false;
-      let videoStream; // To hold the video stream
-      let animationFrameId; // To control the frame sending loop
-      let currentSessionUID = null; // To hold the session UID from the server
-
-      // This prompt is no longer sent to the server but is kept for reference
-      const defaultRepPrompt = `
-Based on the following time-series JSON data of body pose landmarks, count the number of repetitions for the following exercise: '{user_description}'.
-A single repetition is one full cycle of the main movement. Be lenient in your counting.
-
-Your response should be ONLY the integer number of repetitions and nothing else. For example: 8
-
-**JSON Landmark Data:**
-\`\`\`json
-{truncated_json_data}
-\`\`\`
-`.trim();
+      let poseLandmarker;
+      let lastVideoTime = -1;
+      let collectedPoseData = []; // Array to store landmark data during tracking
 
       const defaultFormPrompt = `
-You are an expert AI fitness coach. Your task is to analyze my performance of the following exercise: '{user_description}'.
-Use the provided pose landmark data from my workout session.
+      You are an expert AI fitness coach. Your task is to analyze my performance for this exercise: '{user_description}'.
 
-**Instructions:**
-Analyze the provided data and return a single JSON object with the following structure. Do not include any text or markdown formatting outside of the JSON object itself.
+      Important Notes:
 
-{% raw %}{{
-  "repetition_count": "<integer: Count the number of full repetitions. Be lenient in your counting.>",
-  "form_correctness": "<string: Evaluate my form, symmetry, and range of motion for this specific exercise.>",
-  "speed_pacing": "<string: Analyze the consistency and appropriateness of my movement speed.>",
-  "corrective_feedback": "<string: Provide clear, actionable feedback on mistakes and how to improve my form.>",
-  "overall_summary": "<string: A brief summary of my performance.>"
-}}{% endraw %}
+      The full body may not be visible in the data.
 
-**JSON Landmark Data:**
-\`\`\`json
-{truncated_json_data}
-\`\`\`
-`.trim();
+      Estimate speed and form based on whatever landmarks are available.
 
-      // Hide the now-unused rep prompt and its label
-      repPromptEl.style.display = "none";
-      document.querySelector('label[for="repPrompt"]').style.display = "none";
+      The data I send will look like this simplified example:
+
+      [
+        {
+          "timestamp": "2025-11-23T11:58:28.159Z",
+          "landmarks": {
+            "nose": { "x": 0.39, "y": 0.65, "z": -1.21, "visibility": 0.99 },
+            "left_shoulder": { "x": 0.67, "y": 0.84, "z": -0.62, "visibility": 0.99 },
+            "right_shoulder": { "x": 0.27, "y": 0.91, "z": -0.51, "visibility": 0.99 },
+            "left_elbow": { "x": 0.93, "y": 0.90, "z": -1.11, "visibility": 0.92 },
+            "left_wrist": { "x": 0.70, "y": 0.52, "z": -1.85, "visibility": 0.93 }
+          }
+        },
+        ...
+      ]
+
+
+      Your Output Format:
+      Return only a single JSON object:
+
+      {
+        "form_correctness": "<string>",
+        "speed_pacing": "<string>",
+        "corrective_feedback": "<string>",
+        "overall_summary": "<string>"
+      }
+
+      **JSON Landmark Data:**
+      \`\`\`json
+      {truncated_json_data}
+      \`\`\`
+      `.trim();
+
       formPromptEl.value = defaultFormPrompt;
-      // Update the label for the remaining prompt
-      document.querySelector('label[for="formPrompt"]').textContent =
-        "Analysis Prompt:";
 
-      /**
-       * Starts the camera and begins sending frames to the server.
-       */
-      async function startCamera() {
-        if (videoStream) return; // Camera is already running
+      // 4. Create and initialize the PoseLandmarker
+      async function createPoseLandmarker() {
+        setStatus("Loading AI Model...");
+        const vision = await FilesetResolver.forVisionTasks(
+          // Updated WASM path
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.12/wasm"
+        );
+        poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: `/models/pose_landmarker_lite.task`,
+            delegate: "GPU",
+          },
+          runningMode: "VIDEO",
+          numPoses: 1,
+          // Add confidence thresholds to reduce flickering
+          minPoseDetectionConfidence: 0.5,
+          minPosePresenceConfidence: 0.5,
+          minTrackingConfidence: 0.5,
+        });
+        setStatus("Model loaded. Ready to start camera.");
+        enableCam(); // Automatically start the camera after model loads
+      }
 
-        try {
-          const video = document.getElementById("localVideo");
-          videoStream = await navigator.mediaDevices.getUserMedia({
-            video: { width: 640, height: 480 },
+      // 5. Enable the camera and start the prediction loop
+      function enableCam() {
+        if (!poseLandmarker) {
+          console.log("Wait! poseLandmarker not loaded yet.");
+          return;
+        }
+
+        navigator.mediaDevices
+          .getUserMedia({ video: { width: 640, height: 480 } })
+          .then((stream) => {
+            video.srcObject = stream;
+            video.addEventListener("loadeddata", predictWebcam);
+            setStatus("Camera started. Click 'Start Tracking' to begin.");
+          })
+          .catch((err) => {
+            console.error(err);
+            setStatus(`Camera access error: ${err.message}`, true);
           });
-          video.srcObject = videoStream;
-          await video.play(); // Ensure video is playing before we start capturing
+      }
 
-          const canvas = document.createElement("canvas");
-          const ctx = canvas.getContext("2d");
-          let lastFrameTime = 0;
-          const frameInterval = 1000 / 15; // Target ~15 FPS
+      // 6. The main prediction loop
+      async function predictWebcam() {
+        // Set canvas size to match video display size
+        canvasElement.width = video.videoWidth;
+        canvasElement.height = video.videoHeight;
 
-          async function sendFrame(timestamp) {
-            if (!videoStream) return; // Stop if stream is gone
-
-            animationFrameId = requestAnimationFrame(sendFrame); // Keep the loop going
-
-            if (timestamp - lastFrameTime < frameInterval) {
-              return; // Skip this frame to throttle FPS
-            }
-            lastFrameTime = timestamp;
-
-            // Reduce resolution by 50%
-            const newWidth = video.videoWidth / 2;
-            const newHeight = video.videoHeight / 2;
-            canvas.width = newWidth;
-            canvas.height = newHeight;
-
-            // Flip the image horizontally to mirror the user's view
-            ctx.translate(newWidth, 0);
-            ctx.scale(-1, 1);
-            ctx.drawImage(video, 0, 0, newWidth, newHeight);
-            ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset transform
-
-            canvas.toBlob(
-              (blob) => {
-                if (!blob) return;
-                const formData = new FormData();
-                formData.append("frame", blob, "frame.jpg");
-
-                // Send the frame without waiting for a response
-                fetch("/upload_frame", {
-                  method: "POST",
-                  body: formData,
-                }).catch((err) => {
-                  console.error("Frame upload failed:", err);
-                  // Optionally stop the camera on repeated failures
-                });
-              },
-              "image/jpeg",
-              0.7 // Image quality
+        let startTimeMs = performance.now();
+        if (lastVideoTime !== video.currentTime) {
+          lastVideoTime = video.currentTime;
+          poseLandmarker.detectForVideo(video, startTimeMs, (result) => {
+            canvasCtx.save();
+            canvasCtx.clearRect(
+              0,
+              0,
+              canvasElement.width,
+              canvasElement.height
             );
 
-            // animationFrameId = requestAnimationFrame(sendFrame);
-          }
+            if (result.landmarks && result.landmarks.length > 0) {
+              const landmarks = result.landmarks[0];
+              // Draw landmarks and connectors
+              drawingUtils.drawLandmarks(landmarks, {
+                radius: (data) =>
+                  DrawingUtils.lerp(data.from.z, -0.15, 0.1, 5, 1),
+              });
+              drawingUtils.drawConnectors(
+                landmarks,
+                PoseLandmarker.POSE_CONNECTIONS
+              );
 
-          sendFrame();
-          setStatus("Camera started. Streaming to server.");
-        } catch (err) {
-          console.error("Camera access error:", err);
-          let errorMessage = `Could not access the camera. Please ensure you have a webcam and have granted permission.`;
-          if (
-            window.location.protocol !== "https:" &&
-            window.location.hostname !== "localhost"
-          ) {
-            errorMessage += `<br><br><strong>Important:</strong> Most browsers require a secure (HTTPS) connection to access the camera.`;
-          }
-          setStatus(errorMessage, true);
-          // Remove the alert
+              // If tracking is active, collect the filtered and named data
+              if (isTracking) {
+                const timestamp = new Date().toISOString();
+                const frameLandmarks = { timestamp: timestamp, landmarks: {} };
+
+                IMPORTANT_LANDMARKS.forEach((name) => {
+                  const index = LANDMARK_NAMES.indexOf(name);
+                  if (index !== -1 && landmarks[index]) {
+                    // Check visibility - if not visible, set coordinates to 0
+                    const landmark = landmarks[index];
+                    const isVisible = landmark.visibility > 0.5; // Threshold for visibility
+
+                    frameLandmarks.landmarks[name] = {
+                      x: isVisible ? landmark.x : 0,
+                      y: isVisible ? landmark.y : 0,
+                      z: isVisible ? landmark.z : 0,
+                      visibility: landmark.visibility,
+                    };
+                  } else {
+                    // If landmark doesn't exist, set all to 0
+                    frameLandmarks.landmarks[name] = {
+                      x: 0,
+                      y: 0,
+                      z: 0,
+                      visibility: 0,
+                    };
+                  }
+                });
+                collectedPoseData.push(frameLandmarks);
+              }
+            }
+            canvasCtx.restore();
+          });
         }
+        // Call this function again to keep predicting when the browser is ready
+        window.requestAnimationFrame(predictWebcam);
       }
 
       function setStatus(text, isError = false) {
-        // Use innerHTML to allow for the <br> tag
         statusEl.innerHTML = "Status: " + text;
         statusEl.className = isError ? "error" : "info";
       }
@@ -200,97 +287,78 @@ Analyze the provided data and return a single JSON object with the following str
         startStopBtn.disabled = false;
       }
 
-      async function startTracking() {
-        setStatus("Starting...");
-        analysisResultEl.innerHTML = ""; // Clear previous results
-        try {
-          const response = await fetch("/start_tracking", { method: "POST" });
-          const data = await response.json();
-          if (!response.ok) throw new Error(data.error || "Failed to start");
-
-          isTracking = true;
-          currentSessionUID = data.session_uid; // Save the session UID
-          setStatus(data.status || "Tracking...");
-        } catch (error) {
-          setStatus(error.message, true);
-        } finally {
-          updateButtonState();
-        }
+      function startTracking() {
+        isTracking = true;
+        collectedPoseData = []; // Clear any previous data
+        analysisResultEl.innerHTML = "";
+        setStatus("Tracking... Perform your exercise.");
+        console.log("Tracking started. Collecting pose data."); // Debugging log
+        updateButtonState();
       }
 
       async function stopAndAnalyze() {
-        setStatus("Stopping...");
+        isTracking = false;
+        setStatus("Stopped. Analyzing exercise...");
+        analysisResultEl.innerHTML = `<div class="loader"></div>Analyzing...`;
+        console.log(
+          `Tracking stopped. Collected ${collectedPoseData.length} data points.`
+        ); // Debugging log
+        updateButtonState(); // Visually stop the button immediately
+
+        if (collectedPoseData.length === 0) {
+          setStatus("Analysis failed: No pose data was collected.", true);
+          analysisResultEl.innerHTML = `<p class="error"><strong>Error:</strong> Could not perform analysis because no movement was detected. Please try again.</p>`;
+          updateButtonState();
+          return;
+        }
+
+        const exerciseDescription = document.getElementById(
+          "exerciseDescription"
+        ).value;
+        const formPrompt = formPromptEl.value;
+
+        const startTime = performance.now();
         try {
-          // 1. Stop tracking on the server
-          const stopResponse = await fetch("/stop_tracking", {
+          console.log("Sending data to server for analysis...", {
+            count: collectedPoseData.length,
+            description: exerciseDescription,
+          }); // Debugging log
+
+          const analysisResponse = await fetch("/analyze_exercise", {
             method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              pose_data: collectedPoseData,
+              description: exerciseDescription,
+              form_prompt: formPrompt,
+            }),
           });
-          const stopData = await stopResponse.json();
-          if (!stopResponse.ok)
-            throw new Error(stopData.error || "Failed to stop");
 
-          isTracking = false;
-          setStatus("Stopped. Analyzing exercise...");
-          analysisResultEl.innerHTML = `<div class="loader"></div>Analyzing...`;
+          const analysisData = await analysisResponse.json();
+          const duration = ((performance.now() - startTime) / 1000).toFixed(2);
 
-          // Get the exercise description from the new textbox
-          const exerciseDescription = document.getElementById(
-            "exerciseDescription"
-          ).value;
-          const repPrompt = repPromptEl.value; // This is no longer used by the backend
-          const formPrompt = formPromptEl.value;
-
-          // 2. Analyze the exercise
-          const startTime = performance.now();
-          try {
-            const analysisResponse = await fetch("/analyze_exercise", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                session_uid: currentSessionUID, // Send the session UID
-                description: exerciseDescription,
-                rep_prompt: repPrompt, // Kept for compatibility, but ignored
-                form_prompt: formPrompt,
-              }), // Send description and prompts in the body
-            });
-            const analysisData = await analysisResponse.json(); // This now contains the JSON object
-            const duration = ((performance.now() - startTime) / 1000).toFixed(
-              2
-            );
-
-            if (analysisResponse.ok) {
-              // Format the JSON data into HTML
-              let html = `<h4>Analysis Results <span style="font-size: 12px; color: #555; font-weight: normal;">(${duration}s)</span></h4>`;
-
-              // Check if the model response was a valid JSON or raw text
-              if (analysisData.error) {
-                html += `<p><strong>Repetition Count:</strong> ${analysisData.repetition_count}</p>`;
-                html += `<p class="error"><strong>Analysis Error:</strong> ${analysisData.error}</p>`;
-                html += `<p><strong>Model's Raw Response:</strong></p>`;
-                html += `<pre class="raw-response">${analysisData.raw_response}</pre>`;
-              } else {
-                html += `<p><strong>Repetition Count:</strong> ${analysisData.repetition_count}</p>`;
-                html += `<p><strong>Form & Correctness:</strong> ${analysisData.form_correctness}</p>`;
-                html += `<p><strong>Speed & Pacing:</strong> ${analysisData.speed_pacing}</p>`;
-                html += `<p><strong>Corrective Feedback:</strong> ${analysisData.corrective_feedback}</p>`;
-                html += `<p><strong>Overall Summary:</strong> ${analysisData.overall_summary}</p>`;
-              }
-
-              analysisResultEl.innerHTML = html;
-              setStatus("Analysis complete.");
+          if (analysisResponse.ok) {
+            let html = `<h4>Analysis Results <span style="font-size: 12px; color: #555; font-weight: normal;">(${duration}s)</span></h4>`;
+            if (analysisData.error) {
+              html += `<p class="error"><strong>Analysis Error:</strong> ${analysisData.error}</p>`;
+              html += `<p><strong>Model's Raw Response:</strong></p>`;
+              html += `<pre class="raw-response">${analysisData.raw_response}</pre>`;
             } else {
-              throw new Error(analysisData.error || "Analysis failed");
+              html += `<p><strong>Form & Correctness:</strong> ${analysisData.form_correctness}</p>`;
+              html += `<p><strong>Speed & Pacing:</strong> ${analysisData.speed_pacing}</p>`;
+              html += `<p><strong>Corrective Feedback:</strong> ${analysisData.corrective_feedback}</p>`;
+              html += `<p><strong>Overall Summary:</strong> ${analysisData.overall_summary}</p>`;
             }
-          } catch (analysisError) {
-            analysisResultEl.innerHTML = `<span class="error">Analysis failed: ${analysisError.message}</span>`;
-            setStatus("Analysis failed.", true);
+            analysisResultEl.innerHTML = html;
+            setStatus("Analysis complete.");
+          } else {
+            throw new Error(analysisData.error || "Analysis failed");
           }
-        } catch (error) {
-          setStatus(error.message, true);
+        } catch (analysisError) {
+          analysisResultEl.innerHTML = `<span class="error">Analysis failed: ${analysisError.message}</span>`;
+          setStatus("Analysis failed.", true);
         } finally {
-          currentSessionUID = null; // Clear the session UID
+          collectedPoseData = []; // Clear data after analysis
           updateButtonState();
         }
       }
@@ -313,8 +381,7 @@ Analyze the provided data and return a single JSON object with the following str
       });
 
       // --- Initial state ---
-      // Start the camera as soon as the page loads
-      window.addEventListener("load", startCamera);
+      createPoseLandmarker();
       updateButtonState();
     </script>
   </body>

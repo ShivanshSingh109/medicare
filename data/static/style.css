@@ -19,6 +19,20 @@ h1 {
     box-shadow: 0 4px 8px rgba(0,0,0,0.1);
     background-color: #000;
     max-width: 640px;
+    position: relative; /* Add relative positioning */
+}
+
+/* New styles for video and canvas */
+#webcam, #output_canvas {
+    width: 100%;
+    height: auto;
+    display: block;
+}
+
+#output_canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
 }
 
 img {
