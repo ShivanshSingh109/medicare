@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Login - Medicare</title>
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='auth.css') }}"
+    />
+  </head>
+  <body>
+    <!-- Animated Background -->
+    <div class="animated-bg"></div>
+
+    <!-- Floating Particles -->
+    <div class="particles">
+      <div class="particle"></div>
+      <div class="particle"></div>
+      <div class="particle"></div>
+      <div class="particle"></div>
+      <div class="particle"></div>
+      <div class="particle"></div>
+    </div>
+
+    <!-- Wave Animation -->
+    <div class="wave-container">
+      <div class="wave"></div>
+      <div class="wave"></div>
+      <div class="wave"></div>
+    </div>
+
+    <div class="auth-container">
+      <div class="auth-card">
+        <h1>Welcome Back</h1>
+        <form id="loginForm">
+          <div class="form-group">
+            <label for="identifier">Username or Email</label>
+            <input
+              type="text"
+              id="identifier"
+              name="identifier"
+              required
+              autocomplete="username"
+              placeholder="Enter your username or email"
+            />
+          </div>
+          <div class="form-group">
+            <label for="password">Password</label>
+            <input
+              type="password"
+              id="password"
+              name="password"
+              required
+              autocomplete="current-password"
+              placeholder="Enter your password"
+            />
+          </div>
+          <div id="errorMessage" class="error-message"></div>
+          <button type="submit" class="auth-btn" id="loginBtn">Login</button>
+        </form>
+        <p class="auth-link">
+          Don't have an account? <a href="/register">Register here</a>
+        </p>
+      </div>
+    </div>
+
+    <script>
+      const form = document.getElementById("loginForm");
+      const loginBtn = document.getElementById("loginBtn");
+      const errorEl = document.getElementById("errorMessage");
+
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+
+        errorEl.textContent = "";
+        loginBtn.classList.add("loading");
+        loginBtn.disabled = true;
+        loginBtn.textContent = "";
+
+        const identifier = document.getElementById("identifier").value;
+        const password = document.getElementById("password").value;
+
+        try {
+          const response = await fetch("/api/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ identifier, password }),
+          });
+
+          const data = await response.json();
+
+          if (response.ok) {
+            loginBtn.classList.remove("loading");
+            loginBtn.textContent = "✓ Success!";
+            setTimeout(() => (window.location.href = "/"), 500);
+          } else {
+            loginBtn.classList.remove("loading");
+            loginBtn.disabled = false;
+            loginBtn.textContent = "Login";
+            errorEl.textContent = data.error || "Login failed";
+          }
+        } catch (error) {
+          loginBtn.classList.remove("loading");
+          loginBtn.disabled = false;
+          loginBtn.textContent = "Login";
+          errorEl.textContent = "Network error. Please try again.";
+        }
+      });
+
+      // Add input animation
+      document.querySelectorAll("input").forEach((input) => {
+        input.addEventListener("focus", function () {
+          this.parentElement.style.transform = "scale(1.02)";
+        });
+        input.addEventListener("blur", function () {
+          this.parentElement.style.transform = "scale(1)";
+        });
+      });
+    </script>
+  </body>
+</html>

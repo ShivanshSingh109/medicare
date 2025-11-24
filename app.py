@@ -12,19 +12,40 @@ from webcam import (
     JSON_DATA_FOLDER,
 )
 
+from auth import (
+    login_page,
+    register_page,
+    register,
+    login,
+    logout,
+    get_current_user,
+    login_required
+)
+
 app = Flask(
     __name__,
     template_folder="data/templates",
     static_folder="data/static",
 )
 
+# Secret key for session management
+app.secret_key = os.getenv("SECRET_KEY", "your-secret-key-change-this-in-production")
+
 # Initialize Gemini model
 init_gemini()
 
-# Register routes
-app.add_url_rule("/", "index", index)
+# Register authentication routes
+app.add_url_rule("/login", "login_page", login_page)
+app.add_url_rule("/register", "register_page", register_page)
+app.add_url_rule("/api/register", "register", register, methods=["POST"])
+app.add_url_rule("/api/login", "login", login, methods=["POST"])
+app.add_url_rule("/logout", "logout", logout)
+app.add_url_rule("/api/user", "get_current_user", get_current_user)
+
+# Register main routes (protected)
+app.add_url_rule("/", "index", login_required(index))
 app.add_url_rule("/models/<path:filename>", "serve_model", serve_model)
-app.add_url_rule("/analyze_exercise", "analyze_exercise", analyze_exercise, methods=["POST"])
+app.add_url_rule("/analyze_exercise", "analyze_exercise", login_required(analyze_exercise), methods=["POST"])
 
 if __name__ == "__main__":
     os.makedirs(JSON_DATA_FOLDER, exist_ok=True)

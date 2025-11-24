@@ -7,13 +7,16 @@
       rel="stylesheet"
       href="{{ url_for('static', filename='style.css') }}"
     />
-    <!-- 1. MediaPipe script is no longer needed here, it will be imported directly in the module script -->
   </head>
   <body>
+    <div class="user-header">
+      <span id="welcomeMessage"></span>
+      <a href="/logout" class="logout-btn">Logout</a>
+    </div>
+
     <h1>Body Part Tracker</h1>
 
     <div class="video-container">
-      <!-- 2. Video and Canvas are now the main display -->
       <video id="webcam" autoplay playsinline muted></video>
       <canvas id="output_canvas" class="output_canvas"></canvas>
     </div>
@@ -41,6 +44,18 @@
     </div>
 
     <script type="module">
+      // Fetch current user info
+      fetch("/api/user")
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.username) {
+            document.getElementById(
+              "welcomeMessage"
+            ).textContent = `Welcome, ${data.username}`;
+          }
+        })
+        .catch(() => (window.location.href = "/login"));
+
       // 3. Import necessary components directly from the MediaPipe CDN
       import {
         PoseLandmarker,

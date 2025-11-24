@@ -157,3 +157,35 @@ button:disabled {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
 }
+
+.user-header {
+    position: fixed;
+    top: 0;
+    right: 0;
+    padding: 15px 30px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    z-index: 1000;
+    background: rgba(255, 255, 255, 0.95);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.user-header span {
+    font-weight: 600;
+    color: #1c1e21;
+}
+
+.logout-btn {
+    padding: 8px 16px;
+    background-color: #d93025;
+    color: white;
+    text-decoration: none;
+    border-radius: 6px;
+    font-size: 14px;
+    transition: background-color 0.2s;
+}
+
+.logout-btn:hover {
+    background-color: #b71c1c;
+}
