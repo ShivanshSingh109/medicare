@@ -120,6 +120,13 @@
       let lastVideoTime = -1;
       let collectedPoseData = []; // Array to store landmark data during tracking
 
+      // Variables for visual smoothing (anti-flicker)
+      let lastLandmarks = null;
+      let lastLandmarkTime = 0;
+      const MAX_DROPPED_FRAMES_MS = 500; // increased persistence
+      let smoothedLandmarks = null;
+      const SMOOTHING_ALPHA = 0.35; // lower = more smoothing
+
       const defaultFormPrompt = `
       You are an expert AI fitness coach. Your task is to analyze my performance for this exercise: '{user_description}'.
 
@@ -178,10 +185,9 @@
           },
           runningMode: "VIDEO",
           numPoses: 1,
-          // Add confidence thresholds to reduce flickering
-          minPoseDetectionConfidence: 0.5,
-          minPosePresenceConfidence: 0.5,
-          minTrackingConfidence: 0.5,
+          minPoseDetectionConfidence: 0.55,
+          minPosePresenceConfidence: 0.55,
+          minTrackingConfidence: 0.55,
         });
         setStatus("Model loaded. Ready to start camera.");
         enableCam(); // Automatically start the camera after model loads
@@ -209,7 +215,6 @@
 
       // 6. The main prediction loop
       async function predictWebcam() {
-        // Set canvas size to match video display size
         canvasElement.width = video.videoWidth;
         canvasElement.height = video.videoHeight;
 
@@ -218,45 +223,76 @@
           lastVideoTime = video.currentTime;
           poseLandmarker.detectForVideo(video, startTimeMs, (result) => {
             canvasCtx.save();
-            canvasCtx.clearRect(
-              0,
-              0,
-              canvasElement.width,
-              canvasElement.height
-            );
+            // Soft fade instead of hard clear to reduce visual popping
+            canvasCtx.fillStyle = "rgba(0,0,0,0.25)";
+            canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
+
+            let rawLandmarks = null;
 
             if (result.landmarks && result.landmarks.length > 0) {
-              const landmarks = result.landmarks[0];
-              // Draw landmarks and connectors
-              drawingUtils.drawLandmarks(landmarks, {
+              rawLandmarks = result.landmarks[0];
+              lastLandmarks = rawLandmarks;
+              lastLandmarkTime = performance.now();
+            } else if (
+              lastLandmarks &&
+              performance.now() - lastLandmarkTime < MAX_DROPPED_FRAMES_MS
+            ) {
+              rawLandmarks = lastLandmarks;
+            }
+
+            if (rawLandmarks) {
+              // Initialize smoothedLandmarks first time
+              if (!smoothedLandmarks) {
+                smoothedLandmarks = rawLandmarks.map((l) => ({ ...l }));
+              } else {
+                // Exponential Moving Average smoothing
+                for (let i = 0; i < rawLandmarks.length; i++) {
+                  smoothedLandmarks[i].x =
+                    smoothedLandmarks[i].x * (1 - SMOOTHING_ALPHA) +
+                    rawLandmarks[i].x * SMOOTHING_ALPHA;
+                  smoothedLandmarks[i].y =
+                    smoothedLandmarks[i].y * (1 - SMOOTHING_ALPHA) +
+                    rawLandmarks[i].y * SMOOTHING_ALPHA;
+                  smoothedLandmarks[i].z =
+                    smoothedLandmarks[i].z * (1 - SMOOTHING_ALPHA) +
+                    rawLandmarks[i].z * SMOOTHING_ALPHA;
+                  smoothedLandmarks[i].visibility = rawLandmarks[i].visibility;
+                }
+              }
+
+              // Draw smoothed landmarks
+              drawingUtils.drawLandmarks(smoothedLandmarks, {
                 radius: (data) =>
-                  DrawingUtils.lerp(data.from.z, -0.15, 0.1, 5, 1),
+                  DrawingUtils.lerp(data.from.z, -0.15, 0.1, 5, 2),
               });
               drawingUtils.drawConnectors(
-                landmarks,
-                PoseLandmarker.POSE_CONNECTIONS
+                smoothedLandmarks,
+                PoseLandmarker.POSE_CONNECTIONS,
+                { color: "#FFFFFF", lineWidth: 5 } // thicker for stability
               );
 
-              // If tracking is active, collect the filtered and named data
-              if (isTracking) {
+              // Data collection uses raw (non-smoothed) for authenticity
+              if (
+                isTracking &&
+                result.landmarks &&
+                result.landmarks.length > 0
+              ) {
                 const timestamp = new Date().toISOString();
-                const frameLandmarks = { timestamp: timestamp, landmarks: {} };
+                const frameLandmarks = { timestamp, landmarks: {} };
+                const currentLandmarks = result.landmarks[0];
 
                 IMPORTANT_LANDMARKS.forEach((name) => {
                   const index = LANDMARK_NAMES.indexOf(name);
-                  if (index !== -1 && landmarks[index]) {
-                    // Check visibility - if not visible, set coordinates to 0
-                    const landmark = landmarks[index];
-                    const isVisible = landmark.visibility > 0.5; // Threshold for visibility
-
+                  if (index !== -1 && currentLandmarks[index]) {
+                    const lm = currentLandmarks[index];
+                    const visible = lm.visibility > 0.45;
                     frameLandmarks.landmarks[name] = {
-                      x: isVisible ? landmark.x : 0,
-                      y: isVisible ? landmark.y : 0,
-                      z: isVisible ? landmark.z : 0,
-                      visibility: landmark.visibility,
+                      x: visible ? lm.x : 0,
+                      y: visible ? lm.y : 0,
+                      z: visible ? lm.z : 0,
+                      visibility: lm.visibility,
                     };
                   } else {
-                    // If landmark doesn't exist, set all to 0
                     frameLandmarks.landmarks[name] = {
                       x: 0,
                       y: 0,
@@ -271,7 +307,6 @@
             canvasCtx.restore();
           });
         }
-        // Call this function again to keep predicting when the browser is ready
         window.requestAnimationFrame(predictWebcam);
       }
 
