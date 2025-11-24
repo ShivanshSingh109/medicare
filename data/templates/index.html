@@ -418,6 +418,27 @@
       // --- Initial state ---
       createPoseLandmarker();
       updateButtonState();
+
+      function renderAnalysis(data) {
+        if (data.error) {
+          analysisResultEl.innerHTML = `<div class="error">${data.error}</div>`;
+          return;
+        }
+        const fc = data.form_correctness || "";
+        const sp = data.speed_pacing || "";
+        const cf = data.corrective_feedback || "";
+        const osum = data.overall_summary || "";
+        analysisResultEl.innerHTML = `
+          <strong>Form & Correctness:</strong> ${fc}<br><br>
+          <strong>Speed & Pacing:</strong> ${sp}<br><br>
+          <strong>Corrective Feedback:</strong> ${cf}<br><br>
+          <strong>Overall Summary:</strong> ${osum}
+        `;
+      }
+
+      // Example placeholder call (replace with actual fetch when analysis completes)
+      // fetch('/analyze_exercise', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)})
+      //   .then(r=>r.json()).then(renderAnalysis).catch(e=>console.error(e));
     </script>
   </body>
 </html>

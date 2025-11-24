@@ -24,13 +24,36 @@ def index():
 def serve_model(filename):
     return send_from_directory(".", filename)
 
-# Hard‑coded batching constants
-BATCH_SIZE = 200        # number of frames per batch
-MAX_RETRIES = 3
-RETRY_BASE_DELAY = 2.0  # seconds base delay for exponential backoff on 429
+# Batching + token control constants
+TARGET_MAX_PROMPT_CHARS = 6000      # soft cap per batch prompt
+HARD_MAX_BATCH_FRAMES   = 200       # upper bound frames per batch
+MIN_BATCH_FRAMES        = 40        # lower bound to avoid tiny batches
+MAX_RETRIES             = 3
+RETRY_BASE_DELAY        = 2.0  # seconds base delay for exponential backoff on 429
+
+def _estimate_chars_for_frames(frames):
+    # Quick heuristic: each landmark ~ 65 chars after rounding
+    # Each frame keeps subset of landmarks.
+    landmarks_per_frame = len(next(iter(frames[0]["landmarks"].values()))) if False else len(frames[0]["landmarks"])
+    return len(frames) * landmarks_per_frame * 65
+
+def _adaptive_batches(pose_data):
+    # Start with HARD_MAX_BATCH_FRAMES and shrink if prompt too large.
+    batches = []
+    i = 0
+    while i < len(pose_data):
+        remaining = len(pose_data) - i
+        size = min(HARD_MAX_BATCH_FRAMES, remaining)
+        # Try shrink if char estimate too large
+        while size > MIN_BATCH_FRAMES and _estimate_chars_for_frames(pose_data[i:i+size]) > TARGET_MAX_PROMPT_CHARS:
+            size = int(size * 0.75)
+        batch = pose_data[i:i+size]
+        batches.append(batch)
+        i += size
+    print(f"[webcam] Adaptive batching produced {len(batches)} batches.")
+    return batches
 
 def _prepare_batch(batch):
-    # Keep all frames, optionally lightly compact numeric precision
     compact = []
     for frame in batch:
         lm_compact = {}
@@ -41,10 +64,7 @@ def _prepare_batch(batch):
                 "z": round(v.get("z", 0), 4),
                 "visibility": round(v.get("visibility", 0), 4),
             }
-        compact.append({
-            "timestamp": frame.get("timestamp"),
-            "landmarks": lm_compact
-        })
+        compact.append({"timestamp": frame.get("timestamp"), "landmarks": lm_compact})
     return compact
 
 def _attempt_generate(parts):
@@ -53,47 +73,96 @@ def _attempt_generate(parts):
         try:
             return gemini_model.generate_content(parts)
         except Exception as e:
-            msg = str(e)
-            if "429" not in msg:
+            if "429" not in str(e) and "quota" not in str(e).lower():
                 raise
             delay = RETRY_BASE_DELAY * attempt
-            print(f"[webcam] 429 retry {attempt}/{MAX_RETRIES} sleeping {delay:.1f}s")
+            print(f"[webcam] 429/quota retry {attempt}/{MAX_RETRIES} sleeping {delay:.1f}s")
             time.sleep(delay)
             last_err = e
     raise last_err
 
-def _analyze_in_batches(pose_data, user_description, form_prompt_template):
-    # Split ALL frames into batches (no dropping)
-    batches = [
-        pose_data[i:i + BATCH_SIZE] for i in range(0, len(pose_data), BATCH_SIZE)
-    ]
-    print(f"[webcam] Using all {len(pose_data)} frames across {len(batches)} batches (size={BATCH_SIZE})")
+def _summarize_numeric_features(batch):
+    # Produce condensed stats to reduce final consolidation token use
+    # For each landmark produce min/max/avg for x,y,z (ignoring zeros with low visibility)
+    stats = {}
+    for frame in batch:
+        for name, lm in frame["landmarks"].items():
+            if name not in stats:
+                stats[name] = {"x": [], "y": [], "z": []}
+            # keep all values (already zeroed if invisible)
+            stats[name]["x"].append(lm["x"])
+            stats[name]["y"].append(lm["y"])
+            stats[name]["z"].append(lm["z"])
+    summary = {}
+    for name, axes in stats.items():
+        def agg(arr):
+            if not arr:
+                return {"min": 0, "max": 0, "avg": 0}
+            return {
+                "min": round(min(arr), 4),
+                "max": round(max(arr), 4),
+                "avg": round(sum(arr)/len(arr), 4),
+            }
+        summary[name] = {
+            "x": agg(axes["x"]),
+            "y": agg(axes["y"]),
+            "z": agg(axes["z"]),
+        }
+    return summary
 
+def _analyze_in_batches(pose_data, user_description, form_prompt_template):
+    batches = _adaptive_batches(pose_data)
     batch_summaries = []
+
     for idx, batch in enumerate(batches, start=1):
         compact_batch = _prepare_batch(batch)
-        # Limit JSON string length defensively (won't drop frames, just truncates textual representation in prompt)
-        json_str = json.dumps(compact_batch)
-        truncated_json = json_str[:18000]  # prompt safety truncation; frames still sent logically per batch
+
+        # Convert batch to a compact plain-text format to reduce tokens
+        # Frame lines: timestamp|landmark=x,y,z,vis;landmark2=...
+        lines = []
+        for frame in compact_batch:
+            parts = []
+            for lk, lv in frame["landmarks"].items():
+                parts.append(f"{lk}={lv['x']:.4f},{lv['y']:.4f},{lv['z']:.4f},{lv['visibility']:.2f}")
+            lines.append(f"{frame['timestamp']}|" + ";".join(parts))
+        batch_text = "\n".join(lines)
+
+        # Write plain text batch file
+        with tempfile.NamedTemporaryFile(mode="w+", suffix=".txt", delete=False) as tf:
+            tf.write(batch_text)
+            temp_path = tf.name
+        print(f"[webcam] Uploading batch {idx} text file ({len(batch)} frames)")
+        uploaded = genai.upload_file(temp_path, mime_type="text/plain")
+        os.unlink(temp_path)
+
+        while uploaded.state.name == "PROCESSING":
+            time.sleep(0.5)
+            uploaded = genai.get_file(uploaded.name)
+        if uploaded.state.name == "FAILED":
+            raise RuntimeError("File upload failed for batch.")
+
+        truncated_placeholder = "(Batch data provided as attached plain text file; each line = timestamp|landmark=x,y,z,visibility;...)"
         prompt = (
             form_prompt_template
             .replace("{user_description}", user_description)
-            .replace("{truncated_json_data}", truncated_json)
+            .replace("{truncated_json_data}", truncated_placeholder)
+            + f"\nBatch index: {idx}; Frames: {len(batch)}"
         )
-        print(f"[webcam] Sending batch {idx}/{len(batches)} with {len(batch)} frames")
-        response = _attempt_generate([prompt])
+
+        summaries = _summarize_numeric_features(compact_batch)
+        prompt += "\nCondensed landmark stats (min/max/avg x,y,z per landmark):\n"
+        prompt += json.dumps(summaries)[:2500]
+
+        response = _attempt_generate([prompt, uploaded])
         text = (response.text or "").strip()
         batch_summaries.append({"batch": idx, "raw": text})
 
-    # Consolidation step
-    combined_texts = "\n\n".join(
-        f"Batch {b['batch']}:\n{b['raw']}" for b in batch_summaries
-    )
+    combined = "\n\n".join(f"Batch {b['batch']}:\n{b['raw']}" for b in batch_summaries)
     final_prompt = (
-        "You are an expert AI fitness coach. Consolidate the per-batch analyses below "
-        "into ONE final JSON object with keys: form_correctness, speed_pacing, "
-        "corrective_feedback, overall_summary. Return ONLY JSON.\n\n"
-        f"{combined_texts}"
+        "Consolidate the following batch analyses into ONE JSON with EXACTLY these keys: "
+        "form_correctness, speed_pacing, corrective_feedback, overall_summary. "
+        "Each value must be a single plain English string (no nested JSON). "
+        "Return ONLY JSON.\n\n" + combined
     )
     final_resp = _attempt_generate([final_prompt])
     return final_resp.text, batch_summaries
@@ -142,11 +211,19 @@ def analyze_exercise():
                 "raw_response": final_text
             }
 
+        # Coerce non-string fields to strings to avoid [object Object] on client
+        for k in ["form_correctness", "speed_pacing", "corrective_feedback", "overall_summary"]:
+            if k in analysis_json and not isinstance(analysis_json[k], str):
+                analysis_json[k] = json.dumps(analysis_json[k], ensure_ascii=False)
+
         analysis_json["total_frames"] = len(pose_data)
         analysis_json["batches_used"] = len(batch_meta)
         return jsonify(analysis_json)
 
     except Exception as e:
+        # Add explicit token/size handling
+        if any(k in str(e).lower() for k in ["token", "context", "quota", "429"]):
+            return jsonify({"error": "Token/context limit or quota reached after retries."}), 429
         print(f"[webcam] Error: {e}")
         if "429" in str(e):
             return jsonify({"error": "Rate/resource limit reached after retries."}), 429
