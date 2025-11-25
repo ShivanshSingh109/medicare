@@ -93,7 +93,11 @@
           if (response.ok) {
             loginBtn.classList.remove("loading");
             loginBtn.textContent = "✓ Success!";
-            setTimeout(() => (window.location.href = "/"), 500);
+            // Redirect based on profile status
+            setTimeout(() => {
+              window.location.href =
+                data.redirect || (data.has_profile ? "/" : "/profile-setup");
+            }, 500);
           } else {
             loginBtn.classList.remove("loading");
             loginBtn.disabled = false;

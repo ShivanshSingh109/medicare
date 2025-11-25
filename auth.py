@@ -6,6 +6,7 @@ from functools import wraps
 from flask import render_template, request, jsonify, session, redirect, url_for
 
 USERS_FILE = "users.json"
+PROFILES_FILE = "patient_profiles.json"
 
 def hash_password(password):
     """Hash password using SHA-256"""
@@ -25,6 +26,26 @@ def save_users(users):
     """Save users to JSON file"""
     with open(USERS_FILE, 'w') as f:
         json.dump(users, f, indent=2)
+
+def load_profiles():
+    """Load patient profiles from JSON file"""
+    if not os.path.exists(PROFILES_FILE):
+        return {}
+    try:
+        with open(PROFILES_FILE, 'r') as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_profiles(profiles):
+    """Save patient profiles to JSON file"""
+    with open(PROFILES_FILE, 'w') as f:
+        json.dump(profiles, f, indent=2)
+
+def get_user_profile(email):
+    """Get profile for a specific user"""
+    profiles = load_profiles()
+    return profiles.get(email)
 
 def validate_email(email):
     """Validate email format"""
@@ -52,6 +73,21 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
+def profile_required(f):
+    """Decorator to require completed profile"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            return redirect(url_for('login_page'))
+        
+        # Check if profile exists
+        profile = get_user_profile(session['user_id'])
+        if not profile:
+            return redirect(url_for('profile_setup_page'))
+        
+        return f(*args, **kwargs)
+    return decorated_function
+
 def login_page():
     """Render login page"""
     if 'user_id' in session:
@@ -63,6 +99,117 @@ def register_page():
     if 'user_id' in session:
         return redirect(url_for('index'))
     return render_template("register.html")
+
+def profile_setup_page():
+    """Render profile setup page"""
+    if 'user_id' not in session:
+        return redirect(url_for('login_page'))
+    
+    # If profile already exists, redirect to main page
+    profile = get_user_profile(session['user_id'])
+    if profile:
+        return redirect(url_for('index'))
+    
+    return render_template("profile_setup.html")
+
+def save_profile():
+    """Handle profile form submission"""
+    if 'user_id' not in session:
+        return jsonify({"error": "Not authenticated"}), 401
+    
+    data = request.get_json()
+    
+    # Validate required fields
+    required_fields = ['age', 'gender', 'primary_condition', 'pain_level', 
+                       'mobility_level', 'condition_description', 'exercise_experience']
+    
+    for field in required_fields:
+        if field not in data or data[field] is None or data[field] == '':
+            return jsonify({"error": f"Missing required field: {field}"}), 400
+    
+    # Validate age
+    try:
+        age = int(data['age'])
+        if age < 1 or age > 120:
+            return jsonify({"error": "Invalid age"}), 400
+    except:
+        return jsonify({"error": "Invalid age"}), 400
+    
+    # Validate pain level
+    try:
+        pain_level = int(data['pain_level'])
+        if pain_level < 0 or pain_level > 10:
+            return jsonify({"error": "Invalid pain level"}), 400
+    except:
+        return jsonify({"error": "Invalid pain level"}), 400
+    
+    # Get user info
+    users = load_users()
+    user_id = session['user_id']
+    user_data = users.get(user_id, {})
+    
+    # Create profile
+    profile = {
+        "email": user_id,
+        "username": user_data.get('username', session.get('username', '')),
+        "age": age,
+        "gender": data['gender'],
+        "primary_condition": data['primary_condition'],
+        "pain_level": pain_level,
+        "mobility_level": data['mobility_level'],
+        "medical_history": data.get('medical_history', []),
+        "condition_description": data['condition_description'],
+        "goals": data.get('goals', ''),
+        "exercise_experience": data['exercise_experience'],
+        "created_at": __import__('datetime').datetime.now().isoformat(),
+        "updated_at": __import__('datetime').datetime.now().isoformat()
+    }
+    
+    # Save profile
+    profiles = load_profiles()
+    profiles[user_id] = profile
+    save_profiles(profiles)
+    
+    return jsonify({"message": "Profile saved successfully"}), 200
+
+def update_profile():
+    """Handle profile update"""
+    if 'user_id' not in session:
+        return jsonify({"error": "Not authenticated"}), 401
+    
+    data = request.get_json()
+    profiles = load_profiles()
+    user_id = session['user_id']
+    
+    if user_id not in profiles:
+        return jsonify({"error": "Profile not found"}), 404
+    
+    # Update fields
+    profile = profiles[user_id]
+    updatable_fields = ['age', 'gender', 'primary_condition', 'pain_level', 
+                        'mobility_level', 'medical_history', 'condition_description', 
+                        'goals', 'exercise_experience']
+    
+    for field in updatable_fields:
+        if field in data:
+            profile[field] = data[field]
+    
+    profile['updated_at'] = __import__('datetime').datetime.now().isoformat()
+    
+    save_profiles(profiles)
+    
+    return jsonify({"message": "Profile updated successfully"}), 200
+
+def get_profile():
+    """Get current user's profile"""
+    if 'user_id' not in session:
+        return jsonify({"error": "Not authenticated"}), 401
+    
+    profile = get_user_profile(session['user_id'])
+    if not profile:
+        return jsonify({"error": "Profile not found", "has_profile": False}), 404
+    
+    return jsonify({"profile": profile, "has_profile": True}), 200
 
 def register():
     """Handle user registration"""
@@ -146,7 +293,16 @@ def login():
     session['user_id'] = user_id
     session['username'] = user_data['username']
     
-    return jsonify({"message": "Login successful", "username": user_data['username']}), 200
+    # Check if profile exists
+    profile = get_user_profile(user_id)
+    has_profile = profile is not None
+    
+    return jsonify({
+        "message": "Login successful", 
+        "username": user_data['username'],
+        "has_profile": has_profile,
+        "redirect": "/" if has_profile else "/profile-setup"
+    }), 200
 
 def logout():
     """Handle user logout"""
@@ -158,7 +314,10 @@ def get_current_user():
     if 'user_id' not in session:
         return jsonify({"error": "Not authenticated"}), 401
     
+    profile = get_user_profile(session['user_id'])
+    
     return jsonify({
         "username": session.get('username'),
-        "email": session.get('user_id')
+        "email": session.get('user_id'),
+        "has_profile": profile is not None
     }), 200

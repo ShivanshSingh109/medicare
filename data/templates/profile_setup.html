@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Complete Your Profile - Medicare</title>
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='auth.css') }}"
+    />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='profile.css') }}"
+    />
+  </head>
+  <body>
+    <!-- Animated Background -->
+    <div class="animated-bg"></div>
+
+    <!-- Floating Particles -->
+    <div class="particles">
+      <div class="particle"></div>
+      <div class="particle"></div>
+      <div class="particle"></div>
+      <div class="particle"></div>
+      <div class="particle"></div>
+      <div class="particle"></div>
+    </div>
+
+    <!-- Wave Animation -->
+    <div class="wave-container">
+      <div class="wave"></div>
+      <div class="wave"></div>
+      <div class="wave"></div>
+    </div>
+
+    <div class="auth-container">
+      <div class="auth-card profile-card">
+        <h1>Complete Your Profile</h1>
+        <p class="subtitle">
+          Help us personalize your physiotherapy experience
+        </p>
+
+        <form id="profileForm">
+          <!-- Basic Info -->
+          <div class="form-section">
+            <h3>Basic Information</h3>
+
+            <div class="form-group">
+              <label for="age">Age</label>
+              <input
+                type="number"
+                id="age"
+                name="age"
+                min="1"
+                max="120"
+                required
+                placeholder="Enter your age"
+              />
+            </div>
+
+            <div class="form-group">
+              <label for="gender">Gender</label>
+              <select id="gender" name="gender" required>
+                <option value="">Select gender</option>
+                <option value="male">Male</option>
+                <option value="female">Female</option>
+                <option value="other">Other</option>
+                <option value="prefer_not_to_say">Prefer not to say</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Condition Selection -->
+          <div class="form-section">
+            <h3>Primary Condition</h3>
+            <p class="section-desc">
+              Select the main reason you're seeking physiotherapy
+            </p>
+
+            <div class="condition-grid">
+              <label class="condition-option">
+                <input
+                  type="radio"
+                  name="primary_condition"
+                  value="back_pain"
+                  required
+                />
+                <span class="condition-card">
+                  <span class="condition-icon">🦴</span>
+                  <span class="condition-name">Back Pain</span>
+                </span>
+              </label>
+
+              <label class="condition-option">
+                <input
+                  type="radio"
+                  name="primary_condition"
+                  value="neck_pain"
+                />
+                <span class="condition-card">
+                  <span class="condition-icon">🔄</span>
+                  <span class="condition-name">Neck Pain</span>
+                </span>
+              </label>
+
+              <label class="condition-option">
+                <input
+                  type="radio"
+                  name="primary_condition"
+                  value="shoulder_injury"
+                />
+                <span class="condition-card">
+                  <span class="condition-icon">💪</span>
+                  <span class="condition-name">Shoulder Injury</span>
+                </span>
+              </label>
+
+              <label class="condition-option">
+                <input
+                  type="radio"
+                  name="primary_condition"
+                  value="knee_injury"
+                />
+                <span class="condition-card">
+                  <span class="condition-icon">🦵</span>
+                  <span class="condition-name">Knee Injury</span>
+                </span>
+              </label>
+
+              <label class="condition-option">
+                <input type="radio" name="primary_condition" value="hip_pain" />
+                <span class="condition-card">
+                  <span class="condition-icon">🏃</span>
+                  <span class="condition-name">Hip Pain</span>
+                </span>
+              </label>
+
+              <label class="condition-option">
+                <input
+                  type="radio"
+                  name="primary_condition"
+                  value="post_surgery"
+                />
+                <span class="condition-card">
+                  <span class="condition-icon">🏥</span>
+                  <span class="condition-name">Post-Surgery Recovery</span>
+                </span>
+              </label>
+
+              <label class="condition-option">
+                <input
+                  type="radio"
+                  name="primary_condition"
+                  value="sports_injury"
+                />
+                <span class="condition-card">
+                  <span class="condition-icon">⚽</span>
+                  <span class="condition-name">Sports Injury</span>
+                </span>
+              </label>
+
+              <label class="condition-option">
+                <input
+                  type="radio"
+                  name="primary_condition"
+                  value="arthritis"
+                />
+                <span class="condition-card">
+                  <span class="condition-icon">🤲</span>
+                  <span class="condition-name">Arthritis</span>
+                </span>
+              </label>
+
+              <label class="condition-option">
+                <input
+                  type="radio"
+                  name="primary_condition"
+                  value="general_mobility"
+                />
+                <span class="condition-card">
+                  <span class="condition-icon">🚶</span>
+                  <span class="condition-name">General Mobility</span>
+                </span>
+              </label>
+
+              <label class="condition-option">
+                <input type="radio" name="primary_condition" value="other" />
+                <span class="condition-card">
+                  <span class="condition-icon">📝</span>
+                  <span class="condition-name">Other</span>
+                </span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Pain Level -->
+          <div class="form-section">
+            <h3>Current Pain Level</h3>
+            <div class="pain-scale">
+              <input
+                type="range"
+                id="pain_level"
+                name="pain_level"
+                min="0"
+                max="10"
+                value="5"
+              />
+              <div class="pain-labels">
+                <span>No Pain (0)</span>
+                <span>Moderate (5)</span>
+                <span>Severe (10)</span>
+              </div>
+              <div class="pain-value">
+                Current: <span id="painValue">5</span>/10
+              </div>
+            </div>
+          </div>
+
+          <!-- Mobility Level -->
+          <div class="form-section">
+            <h3>Current Mobility Level</h3>
+            <div class="form-group">
+              <select id="mobility_level" name="mobility_level" required>
+                <option value="">Select your mobility level</option>
+                <option value="fully_mobile">
+                  Fully mobile - No restrictions
+                </option>
+                <option value="slightly_limited">
+                  Slightly limited - Minor discomfort
+                </option>
+                <option value="moderately_limited">
+                  Moderately limited - Need to take breaks
+                </option>
+                <option value="severely_limited">
+                  Severely limited - Need assistance
+                </option>
+                <option value="very_limited">
+                  Very limited - Mostly sedentary
+                </option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Medical History -->
+          <div class="form-section">
+            <h3>Relevant Medical History</h3>
+            <p class="section-desc">Select all that apply</p>
+
+            <div class="checkbox-grid">
+              <label class="checkbox-option">
+                <input
+                  type="checkbox"
+                  name="medical_history"
+                  value="previous_surgery"
+                />
+                <span>Previous Surgery</span>
+              </label>
+              <label class="checkbox-option">
+                <input
+                  type="checkbox"
+                  name="medical_history"
+                  value="chronic_condition"
+                />
+                <span>Chronic Condition</span>
+              </label>
+              <label class="checkbox-option">
+                <input
+                  type="checkbox"
+                  name="medical_history"
+                  value="diabetes"
+                />
+                <span>Diabetes</span>
+              </label>
+              <label class="checkbox-option">
+                <input
+                  type="checkbox"
+                  name="medical_history"
+                  value="heart_condition"
+                />
+                <span>Heart Condition</span>
+              </label>
+              <label class="checkbox-option">
+                <input
+                  type="checkbox"
+                  name="medical_history"
+                  value="osteoporosis"
+                />
+                <span>Osteoporosis</span>
+              </label>
+              <label class="checkbox-option">
+                <input type="checkbox" name="medical_history" value="none" />
+                <span>None of the above</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Detailed Description -->
+          <div class="form-section">
+            <h3>Describe Your Condition</h3>
+            <p class="section-desc">
+              Please provide details about your condition, symptoms, and goals
+            </p>
+
+            <div class="form-group">
+              <label for="condition_description">Condition Details</label>
+              <textarea
+                id="condition_description"
+                name="condition_description"
+                rows="4"
+                required
+                placeholder="Describe your condition, when it started, what triggers pain or discomfort, and what you hope to achieve through physiotherapy..."
+              ></textarea>
+            </div>
+
+            <div class="form-group">
+              <label for="goals">Your Goals</label>
+              <textarea
+                id="goals"
+                name="goals"
+                rows="3"
+                placeholder="What do you want to achieve? (e.g., 'Return to running', 'Reduce daily pain', 'Improve posture')"
+              ></textarea>
+            </div>
+          </div>
+
+          <!-- Exercise Experience -->
+          <div class="form-section">
+            <h3>Exercise Experience</h3>
+            <div class="form-group">
+              <select
+                id="exercise_experience"
+                name="exercise_experience"
+                required
+              >
+                <option value="">Select your experience level</option>
+                <option value="beginner">Beginner - New to exercise</option>
+                <option value="some_experience">
+                  Some experience - Exercise occasionally
+                </option>
+                <option value="regular">
+                  Regular - Exercise 2-3 times/week
+                </option>
+                <option value="active">Active - Exercise 4+ times/week</option>
+                <option value="athlete">
+                  Athlete - Competitive/professional
+                </option>
+              </select>
+            </div>
+          </div>
+
+          <div id="errorMessage" class="error-message"></div>
+          <div id="successMessage" class="success-message"></div>
+
+          <button type="submit" class="auth-btn" id="submitBtn">
+            Save & Continue
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <script>
+      // Pain level slider
+      const painSlider = document.getElementById("pain_level");
+      const painValue = document.getElementById("painValue");
+
+      painSlider.addEventListener("input", function () {
+        painValue.textContent = this.value;
+      });
+
+      // Form submission
+      const form = document.getElementById("profileForm");
+      const submitBtn = document.getElementById("submitBtn");
+      const errorEl = document.getElementById("errorMessage");
+      const successEl = document.getElementById("successMessage");
+
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+
+        errorEl.textContent = "";
+        successEl.textContent = "";
+        submitBtn.classList.add("loading");
+        submitBtn.disabled = true;
+        submitBtn.textContent = "";
+
+        // Collect form data
+        const formData = new FormData(form);
+        const data = {
+          age: parseInt(formData.get("age")),
+          gender: formData.get("gender"),
+          primary_condition: formData.get("primary_condition"),
+          pain_level: parseInt(formData.get("pain_level")),
+          mobility_level: formData.get("mobility_level"),
+          medical_history: formData.getAll("medical_history"),
+          condition_description: formData.get("condition_description"),
+          goals: formData.get("goals") || "",
+          exercise_experience: formData.get("exercise_experience"),
+        };
+
+        try {
+          const response = await fetch("/api/profile", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(data),
+          });
+
+          const result = await response.json();
+
+          if (response.ok) {
+            submitBtn.classList.remove("loading");
+            submitBtn.textContent = "✓ Saved!";
+            successEl.textContent = "Profile saved! Redirecting...";
+            setTimeout(() => (window.location.href = "/"), 1500);
+          } else {
+            submitBtn.classList.remove("loading");
+            submitBtn.disabled = false;
+            submitBtn.textContent = "Save & Continue";
+            errorEl.textContent = result.error || "Failed to save profile";
+          }
+        } catch (error) {
+          submitBtn.classList.remove("loading");
+          submitBtn.disabled = false;
+          submitBtn.textContent = "Save & Continue";
+          errorEl.textContent = "Network error. Please try again.";
+        }
+      });
+
+      // Add input animation
+      document.querySelectorAll("input, select, textarea").forEach((input) => {
+        input.addEventListener("focus", function () {
+          this.parentElement.style.transform = "scale(1.01)";
+        });
+        input.addEventListener("blur", function () {
+          this.parentElement.style.transform = "scale(1)";
+        });
+      });
+    </script>
+  </body>
+</html>

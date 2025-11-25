@@ -15,11 +15,16 @@ from webcam import (
 from auth import (
     login_page,
     register_page,
+    profile_setup_page,
     register,
     login,
     logout,
     get_current_user,
-    login_required
+    login_required,
+    profile_required,
+    save_profile,
+    update_profile,
+    get_profile
 )
 
 app = Flask(
@@ -37,15 +42,19 @@ init_gemini()
 # Register authentication routes
 app.add_url_rule("/login", "login_page", login_page)
 app.add_url_rule("/register", "register_page", register_page)
+app.add_url_rule("/profile-setup", "profile_setup_page", profile_setup_page)
 app.add_url_rule("/api/register", "register", register, methods=["POST"])
 app.add_url_rule("/api/login", "login", login, methods=["POST"])
+app.add_url_rule("/api/profile", "save_profile", save_profile, methods=["POST"])
+app.add_url_rule("/api/profile", "get_profile", get_profile, methods=["GET"])
+app.add_url_rule("/api/profile", "update_profile", update_profile, methods=["PUT"])
 app.add_url_rule("/logout", "logout", logout)
 app.add_url_rule("/api/user", "get_current_user", get_current_user)
 
-# Register main routes (protected)
-app.add_url_rule("/", "index", login_required(index))
+# Register main routes (protected - requires both login AND profile)
+app.add_url_rule("/", "index", profile_required(index))
 app.add_url_rule("/models/<path:filename>", "serve_model", serve_model)
-app.add_url_rule("/analyze_exercise", "analyze_exercise", login_required(analyze_exercise), methods=["POST"])
+app.add_url_rule("/analyze_exercise", "analyze_exercise", profile_required(analyze_exercise), methods=["POST"])
 
 if __name__ == "__main__":
     os.makedirs(JSON_DATA_FOLDER, exist_ok=True)

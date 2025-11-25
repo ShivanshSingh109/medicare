@@ -2,12 +2,15 @@ import os
 import json
 import uuid
 import time
-from flask import render_template, jsonify, request, send_from_directory
+from flask import render_template, jsonify, request, send_from_directory, session
 import google.generativeai as genai
 import math
 
 JSON_DATA_FOLDER = "analysis_data"
 gemini_model = None
+
+# Import profile loader
+from auth import get_user_profile
 
 def init_gemini():
     api_key = os.getenv("GEMINI_API_KEY")
@@ -233,15 +236,64 @@ def _chunk_data_for_llm(features, max_tokens_estimate=8000):
     
     return chunks
 
-def _create_analysis_prompt(features, user_description, chunk_index=None, total_chunks=None):
-    """Create a prompt with full angle time series data"""
+def _create_analysis_prompt(features, user_description, patient_profile=None, chunk_index=None, total_chunks=None):
+    """Create a prompt with full angle time series data and patient context"""
     
     chunk_info = ""
     if chunk_index is not None and total_chunks is not None:
         chunk_info = f"\n(This is part {chunk_index + 1} of {total_chunks} - analyze this data portion)\n"
     
-    prompt = f"""You are an expert AI fitness coach analyzing the exercise: '{user_description}'
+    # Build patient context
+    patient_context = ""
+    if patient_profile:
+        condition_map = {
+            "back_pain": "Back Pain",
+            "neck_pain": "Neck Pain", 
+            "shoulder_injury": "Shoulder Injury",
+            "knee_injury": "Knee Injury",
+            "hip_pain": "Hip Pain",
+            "post_surgery": "Post-Surgery Recovery",
+            "sports_injury": "Sports Injury",
+            "arthritis": "Arthritis",
+            "general_mobility": "General Mobility Issues",
+            "other": "Other Condition"
+        }
+        
+        mobility_map = {
+            "fully_mobile": "Fully mobile",
+            "slightly_limited": "Slightly limited mobility",
+            "moderately_limited": "Moderately limited mobility",
+            "severely_limited": "Severely limited mobility",
+            "very_limited": "Very limited mobility"
+        }
+        
+        experience_map = {
+            "beginner": "Beginner",
+            "some_experience": "Some exercise experience",
+            "regular": "Regular exerciser",
+            "active": "Very active",
+            "athlete": "Athlete level"
+        }
+        
+        patient_context = f"""
+## PATIENT PROFILE (Consider this when giving feedback):
+- Name: {patient_profile.get('username', 'Patient')}
+- Age: {patient_profile.get('age', 'Unknown')}
+- Gender: {patient_profile.get('gender', 'Unknown')}
+- Primary Condition: {condition_map.get(patient_profile.get('primary_condition', ''), 'Unknown')}
+- Current Pain Level: {patient_profile.get('pain_level', 'Unknown')}/10
+- Mobility: {mobility_map.get(patient_profile.get('mobility_level', ''), 'Unknown')}
+- Exercise Experience: {experience_map.get(patient_profile.get('exercise_experience', ''), 'Unknown')}
+- Condition Details: {patient_profile.get('condition_description', 'Not provided')}
+- Goals: {patient_profile.get('goals', 'Not specified')}
+- Medical History: {', '.join(patient_profile.get('medical_history', [])) or 'None reported'}
+
+IMPORTANT: Tailor your feedback to this patient's specific condition, pain level, and experience. Be mindful of their limitations and goals.
+"""
+    
+    prompt = f"""You are an expert AI physiotherapy coach analyzing the exercise: '{user_description}'
 {chunk_info}
+{patient_context}
 ## CRITICAL INSTRUCTIONS:
 - ALWAYS provide specific, actionable feedback based on the data provided
 - NEVER say you need more data, cannot analyze, or ask for additional information
@@ -250,6 +302,7 @@ def _create_analysis_prompt(features, user_description, chunk_index=None, total_
 - DO NOT mention specific degree values, angles, or rep counts in your response
 - Keep each response field to 1-2 sentences maximum
 - Use simple, conversational language
+- Consider the patient's condition and limitations when giving advice
 
 ## Recording Info:
 - Total frames: {features.get('total_frames', 'N/A')}
@@ -305,6 +358,11 @@ def analyze_exercise():
     pose_data = request_data.get("pose_data")
     user_description = (request_data.get("description") or "an exercise").strip()
     
+    # Get patient profile from session
+    patient_profile = None
+    if 'user_id' in session:
+        patient_profile = get_user_profile(session['user_id'])
+    
     # Increased max samples to 5000
     max_samples = min(int(request_data.get("max_samples", 5000)), 10000)
 
@@ -330,7 +388,8 @@ def analyze_exercise():
         for i, chunk in enumerate(chunks):
             prompt = _create_analysis_prompt(
                 chunk, 
-                user_description, 
+                user_description,
+                patient_profile=patient_profile,
                 chunk_index=i if len(chunks) > 1 else None,
                 total_chunks=len(chunks) if len(chunks) > 1 else None
             )
