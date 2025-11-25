@@ -1,7 +1,6 @@
 import os
 import json
 import uuid
-import tempfile
 import time
 from flask import render_template, jsonify, request, send_from_directory
 import google.generativeai as genai
@@ -24,48 +23,8 @@ def index():
 def serve_model(filename):
     return send_from_directory(".", filename)
 
-# Batching + token control constants
-TARGET_MAX_PROMPT_CHARS = 6000      # soft cap per batch prompt
-HARD_MAX_BATCH_FRAMES   = 200       # upper bound frames per batch
-MIN_BATCH_FRAMES        = 40        # lower bound to avoid tiny batches
-MAX_RETRIES             = 3
-RETRY_BASE_DELAY        = 2.0  # seconds base delay for exponential backoff on 429
-
-def _estimate_chars_for_frames(frames):
-    # Quick heuristic: each landmark ~ 65 chars after rounding
-    # Each frame keeps subset of landmarks.
-    landmarks_per_frame = len(next(iter(frames[0]["landmarks"].values()))) if False else len(frames[0]["landmarks"])
-    return len(frames) * landmarks_per_frame * 65
-
-def _adaptive_batches(pose_data):
-    # Start with HARD_MAX_BATCH_FRAMES and shrink if prompt too large.
-    batches = []
-    i = 0
-    while i < len(pose_data):
-        remaining = len(pose_data) - i
-        size = min(HARD_MAX_BATCH_FRAMES, remaining)
-        # Try shrink if char estimate too large
-        while size > MIN_BATCH_FRAMES and _estimate_chars_for_frames(pose_data[i:i+size]) > TARGET_MAX_PROMPT_CHARS:
-            size = int(size * 0.75)
-        batch = pose_data[i:i+size]
-        batches.append(batch)
-        i += size
-    print(f"[webcam] Adaptive batching produced {len(batches)} batches.")
-    return batches
-
-def _prepare_batch(batch):
-    compact = []
-    for frame in batch:
-        lm_compact = {}
-        for k, v in frame["landmarks"].items():
-            lm_compact[k] = {
-                "x": round(v.get("x", 0), 4),
-                "y": round(v.get("y", 0), 4),
-                "z": round(v.get("z", 0), 4),
-                "visibility": round(v.get("visibility", 0), 4),
-            }
-        compact.append({"timestamp": frame.get("timestamp"), "landmarks": lm_compact})
-    return compact
+MAX_RETRIES = 3
+RETRY_BASE_DELAY = 2.0
 
 def _attempt_generate(parts):
     last_err = None
@@ -81,91 +40,259 @@ def _attempt_generate(parts):
             last_err = e
     raise last_err
 
-def _summarize_numeric_features(batch):
-    # Produce condensed stats to reduce final consolidation token use
-    # For each landmark produce min/max/avg for x,y,z (ignoring zeros with low visibility)
-    stats = {}
-    for frame in batch:
-        for name, lm in frame["landmarks"].items():
-            if name not in stats:
-                stats[name] = {"x": [], "y": [], "z": []}
-            # keep all values (already zeroed if invisible)
-            stats[name]["x"].append(lm["x"])
-            stats[name]["y"].append(lm["y"])
-            stats[name]["z"].append(lm["z"])
-    summary = {}
-    for name, axes in stats.items():
-        def agg(arr):
-            if not arr:
-                return {"min": 0, "max": 0, "avg": 0}
-            return {
-                "min": round(min(arr), 4),
-                "max": round(max(arr), 4),
-                "avg": round(sum(arr)/len(arr), 4),
+def _calculate_angle(p1, p2, p3):
+    """Calculate angle at p2 given three points"""
+    if any(p.get("visibility", 0) < 0.5 for p in [p1, p2, p3]):
+        return None
+    
+    v1 = (p1["x"] - p2["x"], p1["y"] - p2["y"])
+    v2 = (p3["x"] - p2["x"], p3["y"] - p2["y"])
+    
+    dot = v1[0] * v2[0] + v1[1] * v2[1]
+    mag1 = math.sqrt(v1[0]**2 + v1[1]**2)
+    mag2 = math.sqrt(v2[0]**2 + v2[1]**2)
+    
+    if mag1 * mag2 == 0:
+        return None
+    
+    cos_angle = max(-1, min(1, dot / (mag1 * mag2)))
+    return math.degrees(math.acos(cos_angle))
+
+def _downsample_series(series, max_points=5000):
+    """Downsample a time series to max_points while preserving pattern"""
+    if len(series) <= max_points:
+        return series
+    
+    # Take evenly spaced samples
+    step = len(series) / max_points
+    return [series[int(i * step)] for i in range(max_points)]
+
+def _extract_movement_features(pose_data, max_samples_per_joint=5000):
+    """Extract movement features with full angle time series"""
+    
+    if not pose_data:
+        return {}
+    
+    # Define joint angle configurations
+    angle_configs = {
+        "left_elbow": ("left_shoulder", "left_elbow", "left_wrist"),
+        "right_elbow": ("right_shoulder", "right_elbow", "right_wrist"),
+        "left_shoulder": ("left_elbow", "left_shoulder", "left_hip"),
+        "right_shoulder": ("right_elbow", "right_shoulder", "right_hip"),
+        "left_knee": ("left_hip", "left_knee", "left_ankle"),
+        "right_knee": ("right_hip", "right_knee", "right_ankle"),
+        "left_hip": ("left_shoulder", "left_hip", "left_knee"),
+        "right_hip": ("right_shoulder", "right_hip", "right_knee"),
+    }
+    
+    # Collect angles over time (full series)
+    angle_series = {name: [] for name in angle_configs}
+    
+    # Collect position changes for movement tracking
+    position_series = {lm: {"x": [], "y": []} for lm in [
+        "left_wrist", "right_wrist", "left_ankle", "right_ankle",
+        "nose", "left_hip", "right_hip"
+    ]}
+    
+    timestamps = []
+    
+    for frame in pose_data:
+        lm = frame.get("landmarks", {})
+        timestamps.append(frame.get("timestamp", ""))
+        
+        # Calculate joint angles for this frame
+        for angle_name, (p1_name, p2_name, p3_name) in angle_configs.items():
+            p1 = lm.get(p1_name, {})
+            p2 = lm.get(p2_name, {})
+            p3 = lm.get(p3_name, {})
+            angle = _calculate_angle(p1, p2, p3)
+            if angle is not None:
+                angle_series[angle_name].append(round(angle, 1))
+            else:
+                angle_series[angle_name].append(None)
+        
+        # Track positions
+        for lm_name in position_series:
+            if lm_name in lm and lm[lm_name].get("visibility", 0) > 0.5:
+                position_series[lm_name]["x"].append(round(lm[lm_name]["x"], 4))
+                position_series[lm_name]["y"].append(round(lm[lm_name]["y"], 4))
+            else:
+                position_series[lm_name]["x"].append(None)
+                position_series[lm_name]["y"].append(None)
+    
+    # Process angle series - remove None values and downsample if needed
+    processed_angles = {}
+    for name, values in angle_series.items():
+        valid_values = [v for v in values if v is not None]
+        if valid_values:
+            downsampled = _downsample_series(valid_values, max_samples_per_joint)
+            processed_angles[name] = {
+                "values": downsampled,
+                "count": len(valid_values),
+                "min": round(min(valid_values), 1),
+                "max": round(max(valid_values), 1),
+                "range": round(max(valid_values) - min(valid_values), 1)
             }
-        summary[name] = {
-            "x": agg(axes["x"]),
-            "y": agg(axes["y"]),
-            "z": agg(axes["z"]),
-        }
-    return summary
+    
+    # Process position series
+    processed_positions = {}
+    for lm_name, coords in position_series.items():
+        valid_x = [v for v in coords["x"] if v is not None]
+        valid_y = [v for v in coords["y"] if v is not None]
+        if valid_x and valid_y:
+            downsampled_x = _downsample_series(valid_x, max_samples_per_joint)
+            downsampled_y = _downsample_series(valid_y, max_samples_per_joint)
+            processed_positions[lm_name] = {
+                "x_values": downsampled_x,
+                "y_values": downsampled_y,
+                "x_range": round(max(valid_x) - min(valid_x), 4),
+                "y_range": round(max(valid_y) - min(valid_y), 4)
+            }
+    
+    # Estimate repetitions by counting peaks
+    def count_reps(values, threshold=15):
+        if len(values) < 5:
+            return 0
+        peaks = 0
+        increasing = False
+        for i in range(1, len(values)):
+            if values[i] > values[i-1] + threshold and not increasing:
+                increasing = True
+            elif values[i] < values[i-1] - threshold and increasing:
+                peaks += 1
+                increasing = False
+        return peaks
+    
+    rep_estimates = {}
+    for name, data in processed_angles.items():
+        reps = count_reps(data["values"])
+        if reps > 0:
+            rep_estimates[name] = reps
+    
+    # Duration estimation
+    duration_seconds = None
+    if len(timestamps) >= 2:
+        try:
+            from datetime import datetime
+            t1 = datetime.fromisoformat(timestamps[0].replace('Z', '+00:00'))
+            t2 = datetime.fromisoformat(timestamps[-1].replace('Z', '+00:00'))
+            duration_seconds = (t2 - t1).total_seconds()
+        except:
+            duration_seconds = len(timestamps) / 30
+    
+    return {
+        "total_frames": len(pose_data),
+        "duration_seconds": round(duration_seconds, 2) if duration_seconds else None,
+        "samples_per_joint": max_samples_per_joint,
+        "joint_angles": processed_angles,
+        "body_positions": processed_positions,
+        "estimated_reps": rep_estimates,
+        "frames_per_second": round(len(pose_data) / duration_seconds, 1) if duration_seconds and duration_seconds > 0 else None
+    }
 
-def _analyze_in_batches(pose_data, user_description, form_prompt_template):
-    batches = _adaptive_batches(pose_data)
-    batch_summaries = []
+def _chunk_data_for_llm(features, max_tokens_estimate=8000):
+    """
+    Split features into chunks if needed to avoid token limits.
+    """
+    def estimate_tokens(data):
+        json_str = json.dumps(data)
+        return len(json_str) // 4
+    
+    total_tokens = estimate_tokens(features)
+    
+    if total_tokens <= max_tokens_estimate:
+        return [features]
+    
+    chunks = []
+    joint_names = list(features.get("joint_angles", {}).keys())
+    position_names = list(features.get("body_positions", {}).keys())
+    
+    avg_tokens_per_joint = total_tokens // (len(joint_names) + len(position_names) + 1)
+    joints_per_chunk = max(1, max_tokens_estimate // avg_tokens_per_joint - 2)
+    
+    base_info = {
+        "total_frames": features.get("total_frames"),
+        "duration_seconds": features.get("duration_seconds"),
+        "samples_per_joint": features.get("samples_per_joint"),
+        "frames_per_second": features.get("frames_per_second"),
+        "estimated_reps": features.get("estimated_reps", {})
+    }
+    
+    for i in range(0, len(joint_names), joints_per_chunk):
+        chunk_joints = joint_names[i:i + joints_per_chunk]
+        chunk = base_info.copy()
+        chunk["joint_angles"] = {k: features["joint_angles"][k] for k in chunk_joints}
+        chunk["chunk_info"] = f"Joints: {', '.join(chunk_joints)}"
+        chunks.append(chunk)
+    
+    if position_names:
+        position_chunk = base_info.copy()
+        position_chunk["body_positions"] = features.get("body_positions", {})
+        position_chunk["chunk_info"] = f"Body positions: {', '.join(position_names)}"
+        chunks.append(position_chunk)
+    
+    return chunks
 
-    for idx, batch in enumerate(batches, start=1):
-        compact_batch = _prepare_batch(batch)
+def _create_analysis_prompt(features, user_description, chunk_index=None, total_chunks=None):
+    """Create a prompt with full angle time series data"""
+    
+    chunk_info = ""
+    if chunk_index is not None and total_chunks is not None:
+        chunk_info = f"\n(This is part {chunk_index + 1} of {total_chunks} - analyze this data portion)\n"
+    
+    prompt = f"""You are an expert AI fitness coach analyzing the exercise: '{user_description}'
+{chunk_info}
+## CRITICAL INSTRUCTIONS:
+- ALWAYS provide specific, actionable feedback based on the data provided
+- NEVER say you need more data, cannot analyze, or ask for additional information
+- If movement is minimal, provide feedback on what the user SHOULD be doing for this exercise
+- Be encouraging but specific about improvements
+- DO NOT mention specific degree values, angles, or rep counts in your response
+- Keep each response field to 1-2 sentences maximum
+- Use simple, conversational language
 
-        # Convert batch to a compact plain-text format to reduce tokens
-        # Frame lines: timestamp|landmark=x,y,z,vis;landmark2=...
-        lines = []
-        for frame in compact_batch:
-            parts = []
-            for lk, lv in frame["landmarks"].items():
-                parts.append(f"{lk}={lv['x']:.4f},{lv['y']:.4f},{lv['z']:.4f},{lv['visibility']:.2f}")
-            lines.append(f"{frame['timestamp']}|" + ";".join(parts))
-        batch_text = "\n".join(lines)
+## Recording Info:
+- Total frames: {features.get('total_frames', 'N/A')}
+- Duration: {features.get('duration_seconds', 'N/A')} seconds
 
-        # Write plain text batch file
-        with tempfile.NamedTemporaryFile(mode="w+", suffix=".txt", delete=False) as tf:
-            tf.write(batch_text)
-            temp_path = tf.name
-        print(f"[webcam] Uploading batch {idx} text file ({len(batch)} frames)")
-        uploaded = genai.upload_file(temp_path, mime_type="text/plain")
-        os.unlink(temp_path)
+## Joint Angle Time Series (degrees over time):
+"""
+    
+    for joint, data in features.get("joint_angles", {}).items():
+        values_str = ", ".join(str(v) for v in data["values"])
+        prompt += f"\n### {joint}:\n"
+        prompt += f"- Range: {data['min']}° to {data['max']}° (movement range: {data['range']}°)\n"
+        prompt += f"- Values: [{values_str}]\n"
+    
+    if features.get("body_positions"):
+        prompt += "\n## Body Position Tracking (normalized 0-1):\n"
+        for part, data in features.get("body_positions", {}).items():
+            x_str = ", ".join(str(v) for v in data["x_values"][:30]) + ("..." if len(data["x_values"]) > 30 else "")
+            y_str = ", ".join(str(v) for v in data["y_values"][:30]) + ("..." if len(data["y_values"]) > 30 else "")
+            prompt += f"\n### {part}:\n"
+            prompt += f"- Movement: X={data['x_range']}, Y={data['y_range']}\n"
+            prompt += f"- X: [{x_str}]\n"
+            prompt += f"- Y: [{y_str}]\n"
+    
+    if features.get("estimated_reps"):
+        prompt += "\n## Detected Repetitions:\n"
+        for joint, reps in features["estimated_reps"].items():
+            prompt += f"- {joint}: {reps} reps\n"
+    
+    prompt += f"""
+## Your Analysis Task for '{user_description}':
+Provide brief, natural feedback (1-2 sentences each, NO technical numbers):
 
-        while uploaded.state.name == "PROCESSING":
-            time.sleep(0.5)
-            uploaded = genai.get_file(uploaded.name)
-        if uploaded.state.name == "FAILED":
-            raise RuntimeError("File upload failed for batch.")
+1. **Form Correctness** - Is the form good? What looks right or needs work?
+2. **Consistency** - Are the movements smooth and steady?
+3. **Speed/Pacing** - Is the speed appropriate?
+4. **Corrective Feedback** - 1-2 quick tips to improve
+5. **Overall Summary** - One encouraging sentence
 
-        truncated_placeholder = "(Batch data provided as attached plain text file; each line = timestamp|landmark=x,y,z,visibility;...)"
-        prompt = (
-            form_prompt_template
-            .replace("{user_description}", user_description)
-            .replace("{truncated_json_data}", truncated_placeholder)
-            + f"\nBatch index: {idx}; Frames: {len(batch)}"
-        )
-
-        summaries = _summarize_numeric_features(compact_batch)
-        prompt += "\nCondensed landmark stats (min/max/avg x,y,z per landmark):\n"
-        prompt += json.dumps(summaries)[:2500]
-
-        response = _attempt_generate([prompt, uploaded])
-        text = (response.text or "").strip()
-        batch_summaries.append({"batch": idx, "raw": text})
-
-    combined = "\n\n".join(f"Batch {b['batch']}:\n{b['raw']}" for b in batch_summaries)
-    final_prompt = (
-        "Consolidate the following batch analyses into ONE JSON with EXACTLY these keys: "
-        "form_correctness, speed_pacing, corrective_feedback, overall_summary. "
-        "Each value must be a single plain English string (no nested JSON). "
-        "Return ONLY JSON.\n\n" + combined
-    )
-    final_resp = _attempt_generate([final_prompt])
-    return final_resp.text, batch_summaries
+Return ONLY this JSON (no markdown, no numbers, no degree symbols):
+{{"form_correctness": "<brief natural feedback>", "consistency": "<brief feedback>", "speed_pacing": "<brief feedback>", "corrective_feedback": "<1-2 quick tips>", "overall_summary": "<one encouraging sentence>"}}
+"""
+    return prompt
 
 def analyze_exercise():
     if gemini_model is None:
@@ -177,15 +304,14 @@ def analyze_exercise():
 
     pose_data = request_data.get("pose_data")
     user_description = (request_data.get("description") or "an exercise").strip()
-    form_prompt_template = request_data.get("form_prompt")
+    
+    # Increased max samples to 5000
+    max_samples = min(int(request_data.get("max_samples", 5000)), 10000)
 
     if not pose_data:
         return jsonify({"error": "No pose_data provided."}), 400
-    if not form_prompt_template:
-        form_prompt_template = "Analyze the exercise '{user_description}' using this data:\n{truncated_json_data}"
 
     try:
-        # Save full raw frames
         filename = f"{uuid.uuid4()}.json"
         filepath = os.path.join(JSON_DATA_FOLDER, filename)
         os.makedirs(JSON_DATA_FOLDER, exist_ok=True)
@@ -193,38 +319,64 @@ def analyze_exercise():
             json.dump(pose_data, f, indent=0)
         print(f"[webcam] Saved full pose data ({len(pose_data)} frames) to '{filepath}'")
 
-        final_text, batch_meta = _analyze_in_batches(
-            pose_data, user_description, form_prompt_template
-        )
+        features = _extract_movement_features(pose_data, max_samples_per_joint=max_samples)
+        print(f"[webcam] Extracted features for {len(features.get('joint_angles', {}))} joints")
+        
+        chunks = _chunk_data_for_llm(features)
+        print(f"[webcam] Data split into {len(chunks)} chunk(s)")
+        
+        all_responses = []
+        
+        for i, chunk in enumerate(chunks):
+            prompt = _create_analysis_prompt(
+                chunk, 
+                user_description, 
+                chunk_index=i if len(chunks) > 1 else None,
+                total_chunks=len(chunks) if len(chunks) > 1 else None
+            )
+            print(f"[webcam] Chunk {i+1} prompt length: {len(prompt)} chars")
+            
+            response = _attempt_generate([prompt])
+            response_text = (response.text or "").strip()
+            all_responses.append(response_text)
+        
+        if len(all_responses) == 1:
+            final_response = all_responses[0]
+        else:
+            combine_prompt = f"""Combine these {len(all_responses)} partial analyses for '{user_description}' into one cohesive response.
+
+{chr(10).join(all_responses)}
+
+Return ONLY this JSON:
+{{"form_correctness": "<combined>", "consistency": "<combined>", "speed_pacing": "<combined>", "corrective_feedback": "<combined tips>", "overall_summary": "<one sentence>"}}
+"""
+            combine_response = _attempt_generate([combine_prompt])
+            final_response = (combine_response.text or "").strip()
 
         try:
-            s = final_text
-            json_start = s.find('{')
-            json_end = s.rfind('}') + 1
+            json_start = final_response.find('{')
+            json_end = final_response.rfind('}') + 1
             if json_start == -1 or json_end == 0:
-                raise ValueError("No JSON object found in final response.")
-            analysis_json = json.loads(s[json_start:json_end])
+                raise ValueError("No JSON object found in response.")
+            analysis_json = json.loads(final_response[json_start:json_end])
         except Exception as e:
-            print(f"[webcam] Final JSON parse warning: {e}")
+            print(f"[webcam] JSON parse warning: {e}")
             analysis_json = {
                 "error": "Model did not return valid JSON.",
-                "raw_response": final_text
+                "raw_response": final_response
             }
 
-        # Coerce non-string fields to strings to avoid [object Object] on client
-        for k in ["form_correctness", "speed_pacing", "corrective_feedback", "overall_summary"]:
+        for k in ["form_correctness", "consistency", "speed_pacing", "corrective_feedback", "overall_summary"]:
             if k in analysis_json and not isinstance(analysis_json[k], str):
                 analysis_json[k] = json.dumps(analysis_json[k], ensure_ascii=False)
 
         analysis_json["total_frames"] = len(pose_data)
-        analysis_json["batches_used"] = len(batch_meta)
+        analysis_json["chunks_used"] = len(chunks)
+        analysis_json["extracted_features"] = features
         return jsonify(analysis_json)
 
     except Exception as e:
-        # Add explicit token/size handling
         if any(k in str(e).lower() for k in ["token", "context", "quota", "429"]):
             return jsonify({"error": "Token/context limit or quota reached after retries."}), 429
         print(f"[webcam] Error: {e}")
-        if "429" in str(e):
-            return jsonify({"error": "Rate/resource limit reached after retries."}), 429
         return jsonify({"error": f"An error occurred during analysis: {e}"}), 500
