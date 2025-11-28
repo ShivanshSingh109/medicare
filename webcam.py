@@ -298,6 +298,7 @@ IMPORTANT: Tailor your feedback to this patient's specific condition, pain level
 - ALWAYS provide specific, actionable feedback based on the data provided
 - NEVER say you need more data, cannot analyze, or ask for additional information
 - If movement is minimal, provide feedback on what the user SHOULD be doing for this exercise
+- If you think the user is not actually performing the exercise, clearly say so in your feedback
 - Be encouraging but specific about improvements
 - DO NOT mention specific degree values, angles, or rep counts in your response
 - Keep each response field to 1-2 sentences maximum

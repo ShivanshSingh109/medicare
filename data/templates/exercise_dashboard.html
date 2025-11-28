@@ -5,34 +5,173 @@
     <title>My Exercises - Medicare</title>
     <link
       rel="stylesheet"
-      href="{{ url_for('static', filename='style.css') }}"
+      href="{{ url_for('static', filename='auth.css') }}"
     />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='profile.css') }}"
+    />
+    <style>
+      .exercise-matrix {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 18px;
+        margin-top: 10px;
+        margin-bottom: 20px;
+      }
+      .exercise-tile {
+        background: white;
+        border-radius: 14px;
+        box-shadow: 0 2px 8px rgba(3, 101, 140, 0.08);
+        border: 2px solid #d9d6a9;
+        padding: 18px 14px;
+        text-align: center;
+        font-size: 17px;
+        font-weight: 500;
+        color: #03658c;
+        cursor: pointer;
+        transition: box-shadow 0.2s, transform 0.2s;
+      }
+      .exercise-tile:hover {
+        box-shadow: 0 6px 18px rgba(3, 101, 140, 0.18);
+        transform: translateY(-2px) scale(1.03);
+        border-color: #03658c;
+        background: rgba(3, 101, 140, 0.07);
+      }
+      .auth-card {
+        max-width: 900px;
+        width: 100%;
+      }
+      .user-header {
+        position: absolute;
+        top: 30px;
+        right: 40px;
+        left: auto;
+        background: rgba(255, 255, 255, 0.95);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.07);
+        border-radius: 14px;
+        padding: 10px 24px;
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        z-index: 100;
+        min-width: 220px;
+        justify-content: flex-end;
+      }
+      .user-header span {
+        font-weight: 600;
+        color: #03658c;
+        font-size: 16px;
+        margin-right: 10px;
+      }
+      .logout-btn {
+        padding: 8px 18px;
+        background-color: #d93025;
+        color: white;
+        text-decoration: none;
+        border-radius: 8px;
+        font-size: 15px;
+        transition: background-color 0.2s;
+        border: none;
+        margin-left: 10px;
+      }
+      .logout-btn:hover {
+        background-color: #b71c1c;
+      }
+      .form-group {
+        margin-bottom: 32px;
+      }
+      .auth-btn {
+        margin-top: 10px;
+        margin-bottom: 0;
+      }
+    </style>
   </head>
   <body>
+    <!-- Animated Background, Particles, Wave -->
+    <div class="animated-bg"></div>
+    <div class="particles">
+      <div class="particle"></div>
+      <div class="particle"></div>
+      <div class="particle"></div>
+      <div class="particle"></div>
+      <div class="particle"></div>
+      <div class="particle"></div>
+    </div>
+    <div class="wave-container">
+      <div class="wave"></div>
+      <div class="wave"></div>
+      <div class="wave"></div>
+    </div>
     <div class="user-header">
       <span id="welcomeMessage"></span>
       <a href="/logout" class="logout-btn">Logout</a>
     </div>
-    <h1>My Exercises</h1>
-    <div class="controls">
-      <label for="newExercise">Add a new exercise:</label>
-      <input type="text" id="newExercise" placeholder="e.g. Shoulder Raise" />
-      <button id="addExerciseBtn">Add</button>
-    </div>
-    <div class="controls">
-      <h3>Your Exercises</h3>
-      <ul id="exerciseList"></ul>
-    </div>
-    <!-- Add this after your exercise list -->
-    <div class="controls">
-      <h3>Dashboard</h3>
-      <button id="openDashboardBtn">Open Full Dashboard</button>
+    <div class="auth-container">
+      <div class="auth-card">
+        <h1>My Exercises</h1>
+        <div class="form-group" id="addExerciseGroup">
+          <label for="newExercise">Add a new exercise:</label>
+          <input
+            type="text"
+            id="newExercise"
+            placeholder="e.g. Shoulder Raise"
+          />
+          <button id="addExerciseBtn" class="auth-btn">Add</button>
+          <button
+            id="removeAddExerciseBtn"
+            class="auth-btn"
+            style="
+              background-color: #28a745;
+              color: white;
+              margin-left: 10px;
+              width: 38px;
+              height: 38px;
+              border-radius: 50%;
+              padding: 0;
+              font-size: 22px;
+              line-height: 38px;
+              vertical-align: middle;
+              display: inline-block;
+            "
+            title="Remove Add Exercise"
+          >
+            &#10003;
+          </button>
+          <span
+            style="
+              margin-left: 8px;
+              color: #28a745;
+              font-weight: 600;
+              vertical-align: middle;
+            "
+          >
+            Complete Setup
+          </span>
+        </div>
+        <div class="form-group">
+          <h3>Your Exercises</h3>
+          <div id="exerciseMatrix" class="exercise-matrix"></div>
+        </div>
+        <div class="form-group">
+          <h3>Dashboard</h3>
+          <button id="openDashboardBtn" class="auth-btn">
+            Open Full Dashboard
+          </button>
+        </div>
+        <div
+          id="exerciseLoader"
+          style="display: none; text-align: center; margin-top: 10px"
+        >
+          <span class="loader"></span>
+          <span style="margin-left: 8px">Adding exercise...</span>
+        </div>
+      </div>
     </div>
     <script>
       let exercises = [];
       let username = "";
 
-      // Fetch user info and exercises
       fetch("/api/user")
         .then((r) => r.json())
         .then((data) => {
@@ -49,44 +188,25 @@
         });
 
       function renderExercises() {
-        const list = document.getElementById("exerciseList");
-        list.innerHTML = "";
+        const matrix = document.getElementById("exerciseMatrix");
+        matrix.innerHTML = "";
         exercises.forEach((ex, idx) => {
-          const li = document.createElement("li");
-          li.textContent = ex.name;
-          li.style.cursor = "pointer";
-          li.onclick = () => startExercise(ex.name);
-          list.appendChild(li);
-        });
-        renderDashboard();
-      }
-
-      function renderDashboard() {
-        const dashList = document.getElementById("dashboardList");
-        dashList.innerHTML = "";
-        exercises.forEach((ex) => {
-          if (ex.analysis_history && ex.analysis_history.length > 0) {
-            ex.analysis_history.forEach((record, idx) => {
-              const li = document.createElement("li");
-              li.textContent = `${ex.name} (${new Date(
-                record.performed_at
-              ).toLocaleString()})`;
-              li.style.cursor = "pointer";
-              li.onclick = () =>
-                viewAnalysis(
-                  record.analysis_file,
-                  ex.name,
-                  record.performed_at
-                );
-              dashList.appendChild(li);
-            });
-          }
+          const tile = document.createElement("div");
+          tile.className = "exercise-tile";
+          tile.textContent = ex.display_name || ex.name;
+          tile.title = ex.name; // Show full name on hover
+          tile.onclick = () => startExercise(ex.name);
+          matrix.appendChild(tile);
         });
       }
 
       document.getElementById("addExerciseBtn").onclick = function () {
         const name = document.getElementById("newExercise").value.trim();
         if (!name) return;
+        const loader = document.getElementById("exerciseLoader");
+        loader.style.display = "block";
+        document.getElementById("addExerciseBtn").disabled = true;
+
         fetch("/api/exercises", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -94,16 +214,26 @@
         })
           .then((r) => r.json())
           .then((data) => {
+            loader.style.display = "none";
+            document.getElementById("addExerciseBtn").disabled = false;
             if (data.success) {
-              exercises.push({ name });
-              renderExercises();
-              document.getElementById("newExercise").value = "";
+              // Fetch updated list to get display_name from backend
+              fetch("/api/exercises")
+                .then((r) => r.json())
+                .then((data) => {
+                  exercises = data.exercises || [];
+                  renderExercises();
+                  document.getElementById("newExercise").value = "";
+                });
             }
+          })
+          .catch(() => {
+            loader.style.display = "none";
+            document.getElementById("addExerciseBtn").disabled = false;
           });
       };
 
       function startExercise(name) {
-        // Save selected exercise in session and redirect to tracker
         fetch("/api/select_exercise", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -113,24 +243,28 @@
         });
       }
 
-      function viewAnalysis(analysisFile, exerciseName, performedAt) {
-        // Save selected analysis in session and redirect
-        fetch("/api/select_analysis", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            analysis_file: analysisFile,
-            name: exerciseName,
-            performed_at: performedAt,
-          }),
-        }).then(() => {
-          window.location.href = "/exercise_analysis";
-        });
-      }
-
       document.getElementById("openDashboardBtn").onclick = function () {
         window.location.href = "/full_dashboard";
       };
+
+      document.getElementById("removeAddExerciseBtn").onclick = function () {
+        // Hide the add exercise UI and the remove button
+        document.querySelector(".form-group").style.display = "none";
+        document.getElementById("removeAddExerciseBtn").style.display = "none";
+        // Save this preference for the user
+        fetch("/api/hide_add_exercise", { method: "POST" });
+      };
+
+      // On page load, check if add exercise should be hidden
+      fetch("/api/hide_add_exercise")
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.hide) {
+            document.querySelector(".form-group").style.display = "none";
+            document.getElementById("removeAddExerciseBtn").style.display =
+              "none";
+          }
+        });
     </script>
   </body>
 </html>

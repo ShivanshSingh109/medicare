@@ -2,24 +2,137 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>Full Dashboard - Medicare</title>
+    <title>Exercise History Dashboard - Medicare</title>
     <link
       rel="stylesheet"
-      href="{{ url_for('static', filename='style.css') }}"
+      href="{{ url_for('static', filename='auth.css') }}"
     />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='profile.css') }}"
+    />
+    <style>
+      .dashboard-matrix {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 22px;
+        margin-top: 10px;
+        margin-bottom: 20px;
+      }
+      .dashboard-tile {
+        background: white;
+        border-radius: 14px;
+        box-shadow: 0 2px 8px rgba(3, 101, 140, 0.08);
+        border: 2px solid #d9d6a9;
+        padding: 18px 14px;
+        font-size: 16px;
+        color: #03658c;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        transition: box-shadow 0.2s, transform 0.2s;
+      }
+      .dashboard-tile:hover {
+        box-shadow: 0 6px 18px rgba(3, 101, 140, 0.18);
+        transform: translateY(-2px) scale(1.03);
+        border-color: #03658c;
+        background: rgba(3, 101, 140, 0.07);
+      }
+      .dashboard-tile strong {
+        font-size: 18px;
+        margin-bottom: 6px;
+      }
+      .dashboard-tile .date {
+        font-size: 13px;
+        color: #59433b;
+        margin-bottom: 10px;
+      }
+      .dashboard-tile .tile-btns {
+        display: flex;
+        gap: 8px;
+        margin-top: 8px;
+      }
+      .auth-card {
+        max-width: 1100px;
+        width: 100%;
+      }
+      .user-header {
+        position: absolute;
+        top: 30px;
+        right: 40px;
+        left: auto;
+        background: rgba(255, 255, 255, 0.95);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.07);
+        border-radius: 14px;
+        padding: 10px 24px;
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        z-index: 100;
+        min-width: 220px;
+        justify-content: flex-end;
+      }
+      .user-header span {
+        font-weight: 600;
+        color: #03658c;
+        font-size: 16px;
+        margin-right: 10px;
+      }
+      .logout-btn {
+        padding: 8px 18px;
+        background-color: #d93025;
+        color: white;
+        text-decoration: none;
+        border-radius: 8px;
+        font-size: 15px;
+        transition: background-color 0.2s;
+        border: none;
+        margin-left: 10px;
+      }
+      .logout-btn:hover {
+        background-color: #b71c1c;
+      }
+      .auth-btn {
+        margin-top: 10px;
+        margin-bottom: 0;
+      }
+    </style>
   </head>
   <body>
+    <div class="animated-bg"></div>
+    <div class="particles">
+      <div class="particle"></div>
+      <div class="particle"></div>
+      <div class="particle"></div>
+      <div class="particle"></div>
+      <div class="particle"></div>
+      <div class="particle"></div>
+    </div>
+    <div class="wave-container">
+      <div class="wave"></div>
+      <div class="wave"></div>
+      <div class="wave"></div>
+    </div>
     <div class="user-header">
       <span id="welcomeMessage"></span>
       <a href="/logout" class="logout-btn">Logout</a>
     </div>
-    <h1>Exercise History Dashboard</h1>
-    <div class="controls">
-      <ul id="dashboardFullList"></ul>
+    <div class="auth-container">
+      <div class="auth-card">
+        <h1>Exercise History Dashboard</h1>
+        <div class="form-group">
+          <div id="dashboardMatrix" class="dashboard-matrix"></div>
+        </div>
+        <button
+          onclick="window.location.href='/exercise_dashboard'"
+          class="auth-btn"
+        >
+          Back to My Exercises
+        </button>
+        <div id="progressReportSection"></div>
+      </div>
     </div>
-    <button onclick="window.location.href='/exercise_dashboard'">
-      Back to My Exercises
-    </button>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
       fetch("/api/user")
         .then((r) => r.json())
@@ -29,40 +142,125 @@
           ).textContent = `Welcome, ${data.username}`;
         });
 
+      let allExercises = [];
+      function renderDashboard() {
+        const matrix = document.getElementById("dashboardMatrix");
+        matrix.innerHTML = "";
+        allExercises.forEach((ex) => {
+          const displayName = ex.display_name || ex.name;
+          if (ex.analysis_history && ex.analysis_history.length > 0) {
+            ex.analysis_history.forEach((record) => {
+              const tile = document.createElement("div");
+              tile.className = "dashboard-tile";
+              tile.innerHTML = `
+                <strong>${displayName}</strong>
+                <span class="date">${new Date(
+                  record.performed_at
+                ).toLocaleString()}</span>
+                <div class="tile-btns">
+                  <button class="view-btn auth-btn" style="padding:7px 14px;">View Analysis</button>
+                  <button class="progress-btn auth-btn" style="padding:7px 14px;">Progress Report</button>
+                </div>
+              `;
+              tile.querySelector(".view-btn").onclick = function () {
+                fetch("/api/select_analysis", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    analysis_file: record.analysis_file,
+                    name: ex.name,
+                    performed_at: record.performed_at,
+                  }),
+                }).then(() => {
+                  window.location.href = "/exercise_analysis";
+                });
+              };
+              tile.querySelector(".progress-btn").onclick = async function () {
+                const section = document.getElementById(
+                  "progressReportSection"
+                );
+                section.innerHTML = `<div class="loader"></div> <span>Please wait, generating progress report...</span>`;
+                const reportResp = await fetch(
+                  "/api/exercise_progress_report",
+                  {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ name: ex.name }),
+                  }
+                );
+                const reportData = await reportResp.json();
+                section.innerHTML =
+                  `<h2>${displayName} Progress Report</h2>` +
+                  (reportData.error
+                    ? `<div class="error">${reportData.error}</div>`
+                    : `<div style="margin-bottom:20px;">${
+                        reportData.progress_report || reportData.report
+                      }</div>
+                       <div>
+                         <canvas id="bar_${displayName.replace(
+                           /[^a-zA-Z0-9]/g,
+                           ""
+                         )}" width="340" height="200" style="max-width:340px;max-height:200px;"></canvas>
+                       </div>`);
+                if (
+                  reportData.pie_chart_data &&
+                  Object.keys(reportData.pie_chart_data).length > 0
+                ) {
+                  const ctxBar = document
+                    .getElementById(
+                      `bar_${displayName.replace(/[^a-zA-Z0-9]/g, "")}`
+                    )
+                    .getContext("2d");
+                  new Chart(ctxBar, {
+                    type: "bar",
+                    data: {
+                      labels: Object.keys(reportData.pie_chart_data),
+                      datasets: [
+                        {
+                          label: "Feedback Distribution",
+                          data: Object.values(reportData.pie_chart_data),
+                          backgroundColor: [
+                            "#36a2eb",
+                            "#ff6384",
+                            "#ffcd56",
+                            "#4bc0c0",
+                            "#9966ff",
+                          ],
+                          maxBarThickness: 40,
+                        },
+                      ],
+                    },
+                    options: {
+                      indexAxis: "y",
+                      plugins: {
+                        legend: { display: false },
+                      },
+                      scales: {
+                        x: {
+                          beginAtZero: true,
+                          max: 100,
+                          title: { display: true, text: "Percentage (%)" },
+                        },
+                        y: {
+                          title: { display: false },
+                        },
+                      },
+                      responsive: false,
+                    },
+                  });
+                }
+              };
+              matrix.appendChild(tile);
+            });
+          }
+        });
+      }
+
       fetch("/api/full_dashboard_data")
         .then((r) => r.json())
         .then((data) => {
-          const list = document.getElementById("dashboardFullList");
-          list.innerHTML = "";
-          data.exercises.forEach((ex) => {
-            const exName = ex.name;
-            if (ex.analysis_history && ex.analysis_history.length > 0) {
-              ex.analysis_history.forEach((record) => {
-                const li = document.createElement("li");
-                li.innerHTML = `<strong>${exName}</strong> <span style="color:#555;">(${new Date(
-                  record.performed_at
-                ).toLocaleString()})</span>
-                <button class="view-btn">View Analysis</button>
-                <button class="view-btn" onclick="window.open('/models/${
-                  record.raw_file
-                }','_blank')">Download Raw Data</button>`;
-                li.querySelector(".view-btn").onclick = function () {
-                  fetch("/api/select_analysis", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      analysis_file: record.analysis_file,
-                      name: exName,
-                      performed_at: record.performed_at,
-                    }),
-                  }).then(() => {
-                    window.location.href = "/exercise_analysis";
-                  });
-                };
-                list.appendChild(li);
-              });
-            }
-          });
+          allExercises = data.exercises || [];
+          renderDashboard();
         });
     </script>
   </body>

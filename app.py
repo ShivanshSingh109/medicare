@@ -59,6 +59,7 @@ app.add_url_rule("/models/<path:filename>", "serve_model", serve_model)
 app.add_url_rule("/analyze_exercise", "analyze_exercise", profile_required(analyze_exercise), methods=["POST"])
 
 EXERCISES_FILE = "user_exercises.json"
+HIDE_ADD_EXERCISE_FILE = "hide_add_exercise.json"
 
 def load_user_exercises():
     if not os.path.exists(EXERCISES_FILE):
@@ -68,6 +69,16 @@ def load_user_exercises():
 
 def save_user_exercises(data):
     with open(EXERCISES_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+
+def load_hide_add_exercise():
+    if not os.path.exists(HIDE_ADD_EXERCISE_FILE):
+        return {}
+    with open(HIDE_ADD_EXERCISE_FILE, "r") as f:
+        return json.load(f)
+
+def save_hide_add_exercise(data):
+    with open(HIDE_ADD_EXERCISE_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
 @app.route("/exercise_dashboard")
@@ -88,10 +99,22 @@ def api_exercises():
         if not name:
             return jsonify({"error": "No exercise name"}), 400
         exercises = data.get(user_id, [])
+        # Check for duplicate
         if not any(e["name"] == name for e in exercises):
-            exercises.append({"name": name})
+            display_name = name
+            if len(name) > 10:
+                from webcam import gemini_model
+                prompt = f"Give a short, 2-word name for this exercise description: '{name}'. Only return the name."
+                try:
+                    response = gemini_model.generate_content([prompt])
+                    display_name = response.text.strip().split('\n')[0]
+                    display_name = display_name.replace('"', '').replace("'", '').strip()
+                except Exception as e:
+                    display_name = name[:10]
+            exercises.append({"name": name, "display_name": display_name})
             data[user_id] = exercises
             save_user_exercises(data)
+            return jsonify({"success": True, "display_name": display_name})
         return jsonify({"success": True})
 
 @app.route("/api/select_exercise", methods=["POST"])
@@ -231,6 +254,96 @@ def api_full_dashboard_data():
     data = load_user_exercises()
     exercises = data.get(user_id, [])
     return jsonify({"exercises": exercises})
+
+@app.route("/api/exercise_progress_report", methods=["POST"])
+@login_required
+def exercise_progress_report():
+    req = request.get_json()
+    exercise_name = req.get("name", "")
+    user_id = session["user_id"]
+    data = load_user_exercises()
+    exercises = data.get(user_id, [])
+    analysis_files = []
+    for ex in exercises:
+        if ex["name"] == exercise_name and "analysis_history" in ex:
+            for record in ex["analysis_history"]:
+                analysis_files.append(record["analysis_file"])
+    if not analysis_files:
+        return jsonify({"error": "No analysis data found for this exercise."}), 404
+
+    # Progress report cache file
+    cache_dir = "progress_reports"
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_file = os.path.join(cache_dir, f"{user_id}_{exercise_name.replace(' ', '_')}.json")
+
+    # Check cache
+    cached = None
+    if os.path.exists(cache_file):
+        with open(cache_file, "r") as f:
+            cached = json.load(f)
+        # Check if cache is up to date
+        cached_files = set(cached.get("analysis_files", []))
+        if cached_files == set(analysis_files):
+            return jsonify(cached["report"])
+
+    # Load all analysis JSONs
+    analysis_data = []
+    for fname in analysis_files:
+        fpath = os.path.join(JSON_DATA_FOLDER, fname)
+        if os.path.exists(fpath):
+            with open(fpath, "r") as f:
+                analysis_data.append(json.load(f))
+
+    # Build prompt for LLM
+    prompt = f"""You are an expert physiotherapy coach. Here are multiple AI analyses for the exercise '{exercise_name}'. Please summarize the user's progress over time, highlight improvements, recurring issues, and give encouragement. Be concise and clear.
+
+Analysis history:
+{json.dumps(analysis_data, indent=2)}
+
+Additionally, analyze the feedback and provide pie chart data as JSON showing the percentage distribution of feedback categories (e.g. 'good form', 'needs improvement', 'speed issues', 'consistency', etc). 
+Return your answer as:
+{{
+  "progress_report": "<short summary>",
+  "pie_chart_data": {{
+    "Good Form": <number>,
+    "Needs Improvement": <number>,
+    "Speed Issues": <number>,
+    "Consistency": <number>,
+    "Other": <number>
+  }}
+}}
+"""
+    from webcam import gemini_model
+    try:
+        response = gemini_model.generate_content([prompt])
+        import re
+        match = re.search(r"\{[\s\S]*\}", response.text)
+        if match:
+            result_json = json.loads(match.group(0))
+        else:
+            result_json = {"progress_report": response.text, "pie_chart_data": {}}
+        # Save to cache
+        with open(cache_file, "w") as f:
+            json.dump({"analysis_files": analysis_files, "report": result_json}, f, indent=2)
+        return jsonify(result_json)
+    except Exception as e:
+        return jsonify({"error": f"LLM error: {e}"}), 500
+
+@app.route("/api/hide_add_exercise", methods=["POST"])
+@login_required
+def hide_add_exercise():
+    user_id = session["user_id"]  # <-- Correct key!
+    data = load_hide_add_exercise()
+    data[user_id] = True
+    save_hide_add_exercise(data)
+    return jsonify({"success": True})
+
+@app.route("/api/hide_add_exercise", methods=["GET"])
+@login_required
+def get_hide_add_exercise():
+    user_id = session["user_id"]
+    data = load_hide_add_exercise()
+    return jsonify({"hide": data.get(user_id, False)})
 
 if __name__ == "__main__":
     os.makedirs(JSON_DATA_FOLDER, exist_ok=True)
