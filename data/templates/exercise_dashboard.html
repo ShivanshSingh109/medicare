@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>My Exercises - Medicare</title>
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='style.css') }}"
+    />
+  </head>
+  <body>
+    <div class="user-header">
+      <span id="welcomeMessage"></span>
+      <a href="/logout" class="logout-btn">Logout</a>
+    </div>
+    <h1>My Exercises</h1>
+    <div class="controls">
+      <label for="newExercise">Add a new exercise:</label>
+      <input type="text" id="newExercise" placeholder="e.g. Shoulder Raise" />
+      <button id="addExerciseBtn">Add</button>
+    </div>
+    <div class="controls">
+      <h3>Your Exercises</h3>
+      <ul id="exerciseList"></ul>
+    </div>
+    <!-- Add this after your exercise list -->
+    <div class="controls">
+      <h3>Dashboard</h3>
+      <button id="openDashboardBtn">Open Full Dashboard</button>
+    </div>
+    <script>
+      let exercises = [];
+      let username = "";
+
+      // Fetch user info and exercises
+      fetch("/api/user")
+        .then((r) => r.json())
+        .then((data) => {
+          username = data.username;
+          document.getElementById(
+            "welcomeMessage"
+          ).textContent = `Welcome, ${username}`;
+          fetch("/api/exercises")
+            .then((r) => r.json())
+            .then((data) => {
+              exercises = data.exercises || [];
+              renderExercises();
+            });
+        });
+
+      function renderExercises() {
+        const list = document.getElementById("exerciseList");
+        list.innerHTML = "";
+        exercises.forEach((ex, idx) => {
+          const li = document.createElement("li");
+          li.textContent = ex.name;
+          li.style.cursor = "pointer";
+          li.onclick = () => startExercise(ex.name);
+          list.appendChild(li);
+        });
+        renderDashboard();
+      }
+
+      function renderDashboard() {
+        const dashList = document.getElementById("dashboardList");
+        dashList.innerHTML = "";
+        exercises.forEach((ex) => {
+          if (ex.analysis_history && ex.analysis_history.length > 0) {
+            ex.analysis_history.forEach((record, idx) => {
+              const li = document.createElement("li");
+              li.textContent = `${ex.name} (${new Date(
+                record.performed_at
+              ).toLocaleString()})`;
+              li.style.cursor = "pointer";
+              li.onclick = () =>
+                viewAnalysis(
+                  record.analysis_file,
+                  ex.name,
+                  record.performed_at
+                );
+              dashList.appendChild(li);
+            });
+          }
+        });
+      }
+
+      document.getElementById("addExerciseBtn").onclick = function () {
+        const name = document.getElementById("newExercise").value.trim();
+        if (!name) return;
+        fetch("/api/exercises", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name }),
+        })
+          .then((r) => r.json())
+          .then((data) => {
+            if (data.success) {
+              exercises.push({ name });
+              renderExercises();
+              document.getElementById("newExercise").value = "";
+            }
+          });
+      };
+
+      function startExercise(name) {
+        // Save selected exercise in session and redirect to tracker
+        fetch("/api/select_exercise", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name }),
+        }).then(() => {
+          window.location.href = "/exercise_tracker";
+        });
+      }
+
+      function viewAnalysis(analysisFile, exerciseName, performedAt) {
+        // Save selected analysis in session and redirect
+        fetch("/api/select_analysis", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            analysis_file: analysisFile,
+            name: exerciseName,
+            performed_at: performedAt,
+          }),
+        }).then(() => {
+          window.location.href = "/exercise_analysis";
+        });
+      }
+
+      document.getElementById("openDashboardBtn").onclick = function () {
+        window.location.href = "/full_dashboard";
+      };
+    </script>
+  </body>
+</html>

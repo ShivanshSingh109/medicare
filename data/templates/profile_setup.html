@@ -410,7 +410,10 @@
             submitBtn.classList.remove("loading");
             submitBtn.textContent = "✓ Saved!";
             successEl.textContent = "Profile saved! Redirecting...";
-            setTimeout(() => (window.location.href = "/"), 1500);
+            setTimeout(
+              () => (window.location.href = "/exercise_dashboard"),
+              1500
+            ); // <-- Change "/" to "/exercise_dashboard"
           } else {
             submitBtn.classList.remove("loading");
             submitBtn.disabled = false;

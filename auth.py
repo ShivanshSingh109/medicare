@@ -108,7 +108,7 @@ def profile_setup_page():
     # If profile already exists, redirect to main page
     profile = get_user_profile(session['user_id'])
     if profile:
-        return redirect(url_for('index'))
+        return redirect(url_for('exercise_dashboard'))
     
     return render_template("profile_setup.html")
 
@@ -301,7 +301,7 @@ def login():
         "message": "Login successful", 
         "username": user_data['username'],
         "has_profile": has_profile,
-        "redirect": "/" if has_profile else "/profile-setup"
+        "redirect": "/exercise_dashboard" if has_profile else "/profile-setup"
     }), 200
 
 def logout():

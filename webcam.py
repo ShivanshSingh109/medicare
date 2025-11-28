@@ -358,9 +358,10 @@ def analyze_exercise():
     pose_data = request_data.get("pose_data")
     user_description = (request_data.get("description") or "an exercise").strip()
     
-    # Get patient profile from session
-    patient_profile = None
-    if 'user_id' in session:
+    # Try to get patient_profile from request_data first (for background thread)
+    patient_profile = request_data.get("patient_profile")
+    if not patient_profile and 'user_id' in session:
+        from auth import get_user_profile
         patient_profile = get_user_profile(session['user_id'])
     
     # Increased max samples to 5000
@@ -432,10 +433,100 @@ Return ONLY this JSON:
         analysis_json["total_frames"] = len(pose_data)
         analysis_json["chunks_used"] = len(chunks)
         analysis_json["extracted_features"] = features
-        return jsonify(analysis_json)
+        analysis_json["description"] = user_description  # Add exercise name
+
+        # Save analysis result to a file for later reference
+        analysis_filename = f"analysis_{uuid.uuid4().hex}.json"
+        analysis_filepath = os.path.join(JSON_DATA_FOLDER, analysis_filename)
+        with open(analysis_filepath, "w") as f:
+            json.dump(analysis_json, f, indent=2)
+
+        # Return the filename so it can be linked
+        return jsonify({**analysis_json, "analysis_file": analysis_filename})
 
     except Exception as e:
         if any(k in str(e).lower() for k in ["token", "context", "quota", "429"]):
             return jsonify({"error": "Token/context limit or quota reached after retries."}), 429
         print(f"[webcam] Error: {e}")
         return jsonify({"error": f"An error occurred during analysis: {e}"}), 500
+
+def run_analysis_logic(pose_data, user_description, patient_profile=None, max_samples=5000):
+    if gemini_model is None:
+        raise ValueError("Gemini model not initialized.")
+
+    if not pose_data:
+        raise ValueError("No pose_data provided.")
+
+    # Save pose data to file
+    filename = f"{uuid.uuid4()}.json"
+    filepath = os.path.join(JSON_DATA_FOLDER, filename)
+    os.makedirs(JSON_DATA_FOLDER, exist_ok=True)
+    with open(filepath, 'w') as f:
+        json.dump(pose_data, f, indent=0)
+    print(f"[webcam] Saved full pose data ({len(pose_data)} frames) to '{filepath}'")
+
+    features = _extract_movement_features(pose_data, max_samples_per_joint=max_samples)
+    print(f"[webcam] Extracted features for {len(features.get('joint_angles', {}))} joints")
+    
+    chunks = _chunk_data_for_llm(features)
+    print(f"[webcam] Data split into {len(chunks)} chunk(s)")
+    
+    all_responses = []
+    
+    for i, chunk in enumerate(chunks):
+        prompt = _create_analysis_prompt(
+            chunk, 
+            user_description,
+            patient_profile=patient_profile,
+            chunk_index=i if len(chunks) > 1 else None,
+            total_chunks=len(chunks) if len(chunks) > 1 else None
+        )
+        print(f"[webcam] Chunk {i+1} prompt length: {len(prompt)} chars")
+        
+        response = _attempt_generate([prompt])
+        response_text = (response.text or "").strip()
+        all_responses.append(response_text)
+    
+    if len(all_responses) == 1:
+        final_response = all_responses[0]
+    else:
+        combine_prompt = f"""Combine these {len(all_responses)} partial analyses for '{user_description}' into one cohesive response.
+
+{chr(10).join(all_responses)}
+
+Return ONLY this JSON:
+{{"form_correctness": "<combined>", "consistency": "<combined>", "speed_pacing": "<combined>", "corrective_feedback": "<combined tips>", "overall_summary": "<one sentence>"}}
+"""
+        combine_response = _attempt_generate([combine_prompt])
+        final_response = (combine_response.text or "").strip()
+
+    try:
+        json_start = final_response.find('{')
+        json_end = final_response.rfind('}') + 1
+        if json_start == -1 or json_end == 0:
+            raise ValueError("No JSON object found in response.")
+        analysis_json = json.loads(final_response[json_start:json_end])
+    except Exception as e:
+        print(f"[webcam] JSON parse warning: {e}")
+        analysis_json = {
+            "error": "Model did not return valid JSON.",
+            "raw_response": final_response
+        }
+
+    for k in ["form_correctness", "consistency", "speed_pacing", "corrective_feedback", "overall_summary"]:
+        if k in analysis_json and not isinstance(analysis_json[k], str):
+            analysis_json[k] = json.dumps(analysis_json[k], ensure_ascii=False)
+
+    analysis_json["total_frames"] = len(pose_data)
+    analysis_json["chunks_used"] = len(chunks)
+    analysis_json["extracted_features"] = features
+    analysis_json["description"] = user_description  # Add exercise name
+
+    # Save analysis result to a file for later reference
+    analysis_filename = f"analysis_{uuid.uuid4().hex}.json"
+    analysis_filepath = os.path.join(JSON_DATA_FOLDER, analysis_filename)
+    with open(analysis_filepath, "w") as f:
+        json.dump(analysis_json, f, indent=2)
+
+    # Return analysis result
+    return analysis_json, analysis_filename

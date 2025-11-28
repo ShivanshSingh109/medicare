@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Perform Exercise - Medicare</title>
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='style.css') }}"
+    />
+  </head>
+  <body>
+    <div class="user-header">
+      <span id="welcomeMessage"></span>
+      <a href="/logout" class="logout-btn">Logout</a>
+    </div>
+    <h1 id="exerciseTitle">Perform Exercise</h1>
+    <div class="video-container">
+      <video id="webcam" autoplay playsinline muted></video>
+      <canvas id="output_canvas" class="output_canvas"></canvas>
+    </div>
+    <div class="controls">
+      <button id="startStopBtn" type="button">Start Tracking</button>
+      <p id="status">Status: Idle</p>
+    </div>
+    <script type="module">
+      // Fetch selected exercise
+      fetch("/api/selected_exercise")
+        .then((r) => r.json())
+        .then((data) => {
+          document.getElementById("exerciseTitle").textContent =
+            "Perform: " + (data.name || "Exercise");
+          document.getElementById("welcomeMessage").textContent = `Welcome, ${
+            data.username || ""
+          }`;
+        });
+
+      // ... (copy your tracking JS from index.html, but REMOVE analysisResultEl and analysis display)
+      // When tracking stops, send data to /analyze_exercise, but DO NOT show analysis, just save it.
+
+      let isTracking = false;
+      let collectedPoseData = [];
+      const startStopBtn = document.getElementById("startStopBtn");
+      const statusEl = document.getElementById("status");
+
+      function setStatus(text, isError = false) {
+        statusEl.innerHTML = "Status: " + text;
+        statusEl.className = isError ? "error" : "info";
+      }
+
+      function startTracking() {
+        isTracking = true;
+        collectedPoseData = [];
+        setStatus("Tracking... Perform your exercise.");
+        startStopBtn.textContent = "Stop & Save";
+        startStopBtn.disabled = false;
+      }
+
+      async function stopAndSave() {
+        isTracking = false;
+        setStatus("Stopped. Saving exercise...");
+        startStopBtn.disabled = true;
+
+        const exerciseTitle = document
+          .getElementById("exerciseTitle")
+          .textContent.replace("Perform: ", "");
+
+        // Send data to backend for background analysis and saving
+        await fetch("/api/queue_exercise_analysis", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            pose_data: collectedPoseData,
+            name: exerciseTitle,
+          }),
+        });
+
+        setStatus("Exercise saved! You can view results in your dashboard.");
+        setTimeout(() => (window.location.href = "/exercise_dashboard"), 1500);
+      }
+
+      startStopBtn.addEventListener("click", () => {
+        if (isTracking) {
+          stopAndSave();
+        } else {
+          startTracking();
+        }
+      });
+
+      // TODO: Add your webcam and pose tracking code here (from index.html)
+
+      import {
+        PoseLandmarker,
+        FilesetResolver,
+        DrawingUtils,
+      } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.12";
+
+      const video = document.getElementById("webcam");
+      const canvasElement = document.getElementById("output_canvas");
+      const canvasCtx = canvasElement.getContext("2d");
+      const drawingUtils = new DrawingUtils(canvasCtx);
+
+      let poseLandmarker;
+      let lastVideoTime = -1;
+      let lastLandmarks = null;
+      let lastLandmarkTime = 0;
+      let smoothedLandmarks = null;
+      const MAX_DROPPED_FRAMES_MS = 500;
+      const SMOOTHING_ALPHA = 0.35;
+
+      const LANDMARK_NAMES = [
+        "nose",
+        "left_shoulder",
+        "right_shoulder",
+        "left_elbow",
+        "right_elbow",
+        "left_wrist",
+        "right_wrist",
+        "left_hip",
+        "right_hip",
+        "left_knee",
+        "right_knee",
+        "left_ankle",
+        "right_ankle",
+      ];
+
+      async function createPoseLandmarker() {
+        setStatus("Loading AI Model...");
+        const vision = await FilesetResolver.forVisionTasks(
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.12/wasm"
+        );
+        poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: `/models/pose_landmarker_lite.task`,
+            delegate: "GPU",
+          },
+          runningMode: "VIDEO",
+          numPoses: 1,
+          minPoseDetectionConfidence: 0.55,
+          minPosePresenceConfidence: 0.55,
+          minTrackingConfidence: 0.55,
+        });
+        setStatus("Model loaded. Ready to start camera.");
+        enableCam();
+      }
+
+      function enableCam() {
+        if (!poseLandmarker) {
+          setStatus("Wait! poseLandmarker not loaded yet.", true);
+          return;
+        }
+        navigator.mediaDevices
+          .getUserMedia({ video: { width: 640, height: 480 } })
+          .then((stream) => {
+            video.srcObject = stream;
+            video.addEventListener("loadeddata", predictWebcam);
+            setStatus("Camera started. Click 'Start Tracking' to begin.");
+          })
+          .catch((err) => {
+            setStatus(`Camera access error: ${err.message}`, true);
+          });
+      }
+
+      async function predictWebcam() {
+        canvasElement.width = video.videoWidth;
+        canvasElement.height = video.videoHeight;
+
+        let startTimeMs = performance.now();
+        if (lastVideoTime !== video.currentTime) {
+          lastVideoTime = video.currentTime;
+          poseLandmarker.detectForVideo(video, startTimeMs, (result) => {
+            canvasCtx.save();
+            canvasCtx.fillStyle = "rgba(0,0,0,0.25)";
+            canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
+
+            let rawLandmarks = null;
+            if (result.landmarks && result.landmarks.length > 0) {
+              rawLandmarks = result.landmarks[0];
+              lastLandmarks = rawLandmarks;
+              lastLandmarkTime = performance.now();
+            } else if (
+              lastLandmarks &&
+              performance.now() - lastLandmarkTime < MAX_DROPPED_FRAMES_MS
+            ) {
+              rawLandmarks = lastLandmarks;
+            }
+
+            if (rawLandmarks) {
+              if (!smoothedLandmarks) {
+                smoothedLandmarks = rawLandmarks.map((l) => ({ ...l }));
+              } else {
+                for (let i = 0; i < rawLandmarks.length; i++) {
+                  smoothedLandmarks[i].x =
+                    smoothedLandmarks[i].x * (1 - SMOOTHING_ALPHA) +
+                    rawLandmarks[i].x * SMOOTHING_ALPHA;
+                  smoothedLandmarks[i].y =
+                    smoothedLandmarks[i].y * (1 - SMOOTHING_ALPHA) +
+                    rawLandmarks[i].y * SMOOTHING_ALPHA;
+                  smoothedLandmarks[i].z =
+                    smoothedLandmarks[i].z * (1 - SMOOTHING_ALPHA) +
+                    rawLandmarks[i].z * SMOOTHING_ALPHA;
+                  smoothedLandmarks[i].visibility = rawLandmarks[i].visibility;
+                }
+              }
+              drawingUtils.drawLandmarks(smoothedLandmarks, { radius: 4 });
+              drawingUtils.drawConnectors(
+                smoothedLandmarks,
+                PoseLandmarker.POSE_CONNECTIONS,
+                { color: "#FFFFFF", lineWidth: 5 }
+              );
+
+              // Data collection uses raw (non-smoothed) for authenticity
+              if (
+                isTracking &&
+                result.landmarks &&
+                result.landmarks.length > 0
+              ) {
+                const timestamp = new Date().toISOString();
+                const frameLandmarks = { timestamp, landmarks: {} };
+                const currentLandmarks = result.landmarks[0];
+                LANDMARK_NAMES.forEach((name, idx) => {
+                  if (currentLandmarks[idx]) {
+                    const lm = currentLandmarks[idx];
+                    frameLandmarks.landmarks[name] = {
+                      x: lm.x,
+                      y: lm.y,
+                      z: lm.z,
+                      visibility: lm.visibility,
+                    };
+                  }
+                });
+                collectedPoseData.push(frameLandmarks);
+              }
+            }
+            canvasCtx.restore();
+          });
+        }
+        window.requestAnimationFrame(predictWebcam);
+      }
+
+      // Initialize everything
+      createPoseLandmarker();
+    </script>
+  </body>
+</html>
