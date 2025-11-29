@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Doctor - Exercise Analysis</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='auth.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='profile.css') }}">
+  </head>
+  <body>
+    <div class="user-header">
+      <span id="welcomeMessage"></span>
+      <a href="/logout" class="logout-btn">Logout</a>
+    </div>
+    <div class="auth-container">
+      <div class="auth-card" style="max-width: 900px">
+        <h1>Patient Exercise Analysis</h1>
+        <div class="form-group">
+          <h3 id="analysisTitle"></h3>
+          <p id="analysisDate"></p>
+          <div id="analysisResult" class="analysis-result"></div>
+          <button id="backBtn" class="auth-btn" style="margin-top: 28px">
+            Back to Patient Dashboard
+          </button>
+        </div>
+      </div>
+    </div>
+    <script>
+      fetch("/api/user")
+        .then((r) => r.json())
+        .then((data) => {
+          document.getElementById("welcomeMessage").textContent = `Welcome, ${data.username}`;
+        });
+
+      fetch("/api/analysis_data")
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.error) {
+            document.getElementById("analysisResult").textContent = data.error;
+            return;
+          }
+          document.getElementById("analysisTitle").textContent = data.exercise_name || "Exercise";
+          document.getElementById("analysisDate").textContent = "Performed at: " + new Date(data.performed_at).toLocaleString();
+          const a = data.analysis;
+          let html = "";
+          html += `<strong>Form & Correctness:</strong> ${a.form_correctness || ""}<br><br>`;
+          html += `<strong>Consistency:</strong> ${a.consistency || ""}<br><br>`;
+          html += `<strong>Speed & Pacing:</strong> ${a.speed_pacing || ""}<br><br>`;
+          html += `<strong>Corrective Feedback:</strong> ${a.corrective_feedback || ""}<br><br>`;
+          html += `<strong>Overall Summary:</strong> ${a.overall_summary || ""}`;
+          document.getElementById("analysisResult").innerHTML = html;
+        });
+
+      document.getElementById("backBtn").onclick = function () {
+        // Go back to the patient dashboard
+        fetch("/api/doctor_view_patient")
+          .then((r) => r.json())
+          .then((data) => {
+            if (data.email) {
+              window.location.href = `/doctor/patient/${encodeURIComponent(data.email)}`;
+            } else {
+              window.location.href = "/doctor";
+            }
+          });
+      };
+    </script>
+  </body>
+</html>

@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Doctor Dashboard - Medicare</title>
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='auth.css') }}"
+    />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='profile.css') }}"
+    />
+    <style>
+      body {
+        background: #f7f7fa;
+      }
+      .doctor-list-card {
+        max-width: 900px;
+        margin: 40px auto;
+        background: #fff;
+        border-radius: 16px;
+        box-shadow: 0 4px 24px rgba(40, 44, 52, 0.08);
+        border: 1px solid #e2e2e2;
+        padding: 40px 32px;
+      }
+      .patient-row {
+        border-bottom: 1px solid #e2e2e2;
+        padding: 18px 0;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+      .patient-row:last-child {
+        border-bottom: none;
+      }
+      .patient-row:hover {
+        background: #f0f2f5;
+      }
+      .patient-name {
+        font-size: 18px;
+        font-weight: 600;
+        color: #2d3748;
+      }
+      .patient-info {
+        font-size: 15px;
+        color: #444;
+        margin-top: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="doctor-list-card">
+      <h1>All Patients</h1>
+      <div id="patientsList"></div>
+    </div>
+    <script>
+      fetch("/api/all_patients")
+        .then((r) => r.json())
+        .then((data) => {
+          const list = document.getElementById("patientsList");
+          list.innerHTML = "";
+          data.patients.forEach((p) => {
+            const div = document.createElement("div");
+            div.className = "patient-row";
+            div.innerHTML = `
+              <div class="patient-name">${p.username || p.email}</div>
+              <div class="patient-info">
+                Email: ${p.email}<br>
+                Age: ${p.age || ""} | Gender: ${p.gender || ""}<br>
+                Condition: ${p.primary_condition || ""}<br>
+                Pain Level: ${p.pain_level || ""} | Mobility: ${
+              p.mobility_level || ""
+            }
+              </div>
+            `;
+            div.onclick = function () {
+              window.location.href = `/doctor/patient/${encodeURIComponent(
+                p.email
+              )}`;
+            };
+            list.appendChild(div);
+          });
+        });
+    </script>
+  </body>
+</html>

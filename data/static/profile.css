@@ -4,6 +4,14 @@
     overflow-y: auto;
 }
 
+body {
+  background-color: #e5e5f7 !important;
+  background-image: radial-gradient(#b0b0b0 10%, transparent 10%),
+                    radial-gradient(#b0b0b0 10%, transparent 10%);
+  background-size: 100px 100px;
+  background-position: 0 0, 50px 50px;
+}
+
 .profile-card::-webkit-scrollbar {
     width: 8px;
 }
@@ -15,7 +23,7 @@
 
 .profile-card::-webkit-scrollbar-thumb {
     background: #03658C;
-    border-radius: 4px;
+    border-radius: 2px !important;
 }
 
 .subtitle {
@@ -76,7 +84,7 @@
     padding: 15px 10px;
     background: white;
     border: 2px solid #D9D6A9;
-    border-radius: 12px;
+    border-radius: 0 !important;
     transition: all 0.3s ease;
 }
 
@@ -160,7 +168,7 @@
     padding: 12px;
     background: white;
     border: 2px solid #D9D6A9;
-    border-radius: 8px;
+    border-radius: 0 !important;
     cursor: pointer;
     transition: all 0.3s ease;
 }
@@ -209,7 +217,7 @@
     width: 100%;
     padding: 14px 16px;
     border: 2px solid #D9D6A9;
-    border-radius: 12px;
+    border-radius: 0 !important;
     font-size: 15px;
     font-family: inherit;
     resize: vertical;
@@ -226,4 +234,37 @@
 
 .form-group textarea::placeholder {
     color: rgba(89, 67, 59, 0.5);
+}
+
+/* Force square corners in profile styles */
+.profile-card,
+.condition-card,
+.checkbox-option,
+.form-group textarea,
+.form-section {
+  border-radius: 0 !important;
+  background: #fff;
+  border: 1px solid #e2e2e2;
+}
+
+.subtitle,
+.section-desc,
+.pain-labels,
+.pain-value,
+.condition-name {
+    color: #2d3748;
+    opacity: 0.8;
+}
+
+.form-section h3 {
+    color: #2d3748;
+}
+
+.pain-scale input[type="range"] {
+    background: #e2e2e2;
+}
+
+.pain-scale input[type="range"]::-webkit-slider-thumb {
+    background: #fff;
+    border: 2px solid #2d3748;
 }

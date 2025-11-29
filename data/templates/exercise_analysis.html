@@ -13,36 +13,18 @@
     />
   </head>
   <body>
-    <div class="animated-bg"></div>
-    <div class="particles">
-      <div class="particle"></div>
-      <div class="particle"></div>
-      <div class="particle"></div>
-      <div class="particle"></div>
-      <div class="particle"></div>
-      <div class="particle"></div>
-    </div>
-    <div class="wave-container">
-      <div class="wave"></div>
-      <div class="wave"></div>
-      <div class="wave"></div>
-    </div>
     <div class="user-header">
       <span id="welcomeMessage"></span>
       <a href="/logout" class="logout-btn">Logout</a>
     </div>
     <div class="auth-container">
-      <div class="auth-card">
+      <div class="auth-card" style="max-width: 900px">
         <h1>Exercise Analysis</h1>
         <div class="form-group">
           <h3 id="analysisTitle"></h3>
           <p id="analysisDate"></p>
           <div id="analysisResult" class="analysis-result"></div>
-          <button
-            onclick="window.location.href='/full_dashboard'"
-            class="auth-btn"
-            style="margin-top: 28px"
-          >
+          <button id="backBtn" class="auth-btn" style="margin-top: 28px">
             Back to Dashboard
           </button>
         </div>
@@ -87,6 +69,21 @@
           }`;
           document.getElementById("analysisResult").innerHTML = html;
         });
+
+      // Back button logic: go to doctor or user dashboard
+      document.getElementById("backBtn").onclick = function () {
+        fetch("/api/doctor_view_patient")
+          .then((r) => r.json())
+          .then((data) => {
+            if (data.email) {
+              // Doctor view: go to doctor dashboard
+              window.location.href = "/doctor";
+            } else {
+              // Patient view: go to own dashboard
+              window.location.href = "/full_dashboard";
+            }
+          });
+      };
     </script>
   </body>
 </html>

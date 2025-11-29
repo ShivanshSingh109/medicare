@@ -236,7 +236,8 @@ def _chunk_data_for_llm(features, max_tokens_estimate=8000):
     
     return chunks
 
-def _create_analysis_prompt(features, user_description, patient_profile=None, chunk_index=None, total_chunks=None):
+
+def _create_analysis_prompt(features, user_description, patient_profile=None, chunk_index=None, total_chunks=None, third_person=False):
     """Create a prompt with full angle time series data and patient context"""
     
     chunk_info = ""
@@ -291,14 +292,14 @@ def _create_analysis_prompt(features, user_description, patient_profile=None, ch
 IMPORTANT: Tailor your feedback to this patient's specific condition, pain level, and experience. Be mindful of their limitations and goals.
 """
     
-    prompt = f"""You are an expert AI physiotherapy coach analyzing the exercise: '{user_description}'
-{chunk_info}
-{patient_context}
+    # If third_person is True, replace "you"/"your" with "they"/"their" in instructions
+    if third_person:
+        instructions = """
 ## CRITICAL INSTRUCTIONS:
 - ALWAYS provide specific, actionable feedback based on the data provided
 - NEVER say you need more data, cannot analyze, or ask for additional information
-- If movement is minimal, provide feedback on what the user SHOULD be doing for this exercise
-- If you think the user is not actually performing the exercise, clearly say so in your feedback
+- If movement is minimal, provide feedback on what the patient SHOULD be doing for this exercise
+- If you think the patient is not actually performing the exercise, clearly say so in your feedback
 - Be encouraging but specific about improvements
 - DO NOT mention specific degree values, angles, or rep counts in your response
 - Keep each response field to 1-2 sentences maximum
@@ -306,9 +307,31 @@ IMPORTANT: Tailor your feedback to this patient's specific condition, pain level
 - Consider the patient's condition and limitations when giving advice
 
 ## Recording Info:
-- Total frames: {features.get('total_frames', 'N/A')}
-- Duration: {features.get('duration_seconds', 'N/A')} seconds
+- Total frames: {frames}
+- Duration: {duration} seconds
+""".format(frames=features.get('total_frames', 'N/A'), duration=features.get('duration_seconds', 'N/A'))
+    else:
+        instructions = """
+## CRITICAL INSTRUCTIONS:
+- ALWAYS provide specific, actionable feedback based on the data provided
+- NEVER say you need more data, cannot analyze, or ask for additional information
+- If movement is minimal, provide feedback on what you SHOULD be doing for this exercise
+- If you think you are not actually performing the exercise, clearly say so in your feedback
+- Be encouraging but specific about improvements
+- DO NOT mention specific degree values, angles, or rep counts in your response
+- Keep each response field to 1-2 sentences maximum
+- Use simple, conversational language
+- Consider your condition and limitations when giving advice
 
+## Recording Info:
+- Total frames: {frames}
+- Duration: {duration} seconds
+""".format(frames=features.get('total_frames', 'N/A'), duration=features.get('duration_seconds', 'N/A'))
+
+    prompt = f"""You are an expert AI physiotherapy coach analyzing the exercise: '{user_description}'
+{chunk_info}
+{patient_context}
+{instructions}
 ## Joint Angle Time Series (degrees over time):
 """
     

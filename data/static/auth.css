@@ -6,155 +6,21 @@
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    position: relative;
+    background-color: #e5e5f7 !important;
+    background-image: radial-gradient(#b0b0b0 10%, transparent 10%),
+                    radial-gradient(#b0b0b0 10%, transparent 10%);
+    background-size: 100px 100px;
+    background-position: 0 0, 50px 50px;
+    color: #222;
 }
 
-/* Animated Background - Updated with new colors */
-.animated-bg {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(135deg, #03658C 0%, #03658C 50%, #59433B 100%);
-    z-index: -2;
-    animation: gradientShift 15s ease infinite;
-}
-
-@keyframes gradientShift {
-    0%, 100% {
-        background: linear-gradient(135deg, #03658C 0%, #03658C 50%, #59433B 100%);
-    }
-    50% {
-        background: linear-gradient(135deg, #03658C 0%, #03658C 50%, #59433B 100%);
-    }
-}
-
-/* Floating Particles */
-.particles {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    z-index: -1;
-}
-
+/* Remove animated backgrounds, particles, waves */
+.animated-bg,
+.particles,
+.wave-container,
+.wave,
 .particle {
-    position: absolute;
-    background: rgba(213, 229, 242, 0.2);
-    border-radius: 50%;
-    animation: float 20s infinite ease-in-out;
-}
-
-.particle:nth-child(1) {
-    width: 80px;
-    height: 80px;
-    left: 10%;
-    top: 20%;
-    animation-delay: 0s;
-    animation-duration: 15s;
-}
-
-.particle:nth-child(2) {
-    width: 60px;
-    height: 60px;
-    left: 70%;
-    top: 10%;
-    animation-delay: 2s;
-    animation-duration: 18s;
-}
-
-.particle:nth-child(3) {
-    width: 100px;
-    height: 100px;
-    left: 80%;
-    top: 60%;
-    animation-delay: 4s;
-    animation-duration: 20s;
-}
-
-.particle:nth-child(4) {
-    width: 50px;
-    height: 50px;
-    left: 20%;
-    top: 70%;
-    animation-delay: 1s;
-    animation-duration: 16s;
-}
-
-.particle:nth-child(5) {
-    width: 70px;
-    height: 70px;
-    left: 50%;
-    top: 50%;
-    animation-delay: 3s;
-    animation-duration: 22s;
-}
-
-.particle:nth-child(6) {
-    width: 90px;
-    height: 90px;
-    left: 30%;
-    top: 30%;
-    animation-delay: 5s;
-    animation-duration: 19s;
-}
-
-@keyframes float {
-    0%, 100% {
-        transform: translate(0, 0) rotate(0deg);
-        opacity: 0.3;
-    }
-    33% {
-        transform: translate(100px, -100px) rotate(120deg);
-        opacity: 0.6;
-    }
-    66% {
-        transform: translate(-50px, 80px) rotate(240deg);
-        opacity: 0.4;
-    }
-}
-
-/* Wave Animation - Updated colors */
-.wave-container {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    width: 100%;
-    height: 200px;
-    z-index: -1;
-}
-
-.wave {
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    width: 200%;
-    height: 100%;
-    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1440 320'%3E%3Cpath fill='rgba(213,229,242,0.15)' d='M0,96L48,112C96,128,192,160,288,160C384,160,480,128,576,112C672,96,768,96,864,112C960,128,1056,160,1152,160C1248,160,1344,128,1392,112L1440,96L1440,320L1392,320C1344,320,1248,320,1152,320C1056,320,960,320,864,320C768,320,672,320,576,320C480,320,384,320,288,320C192,320,96,320,48,320L0,320Z'%3E%3C/path%3E%3C/svg%3E");
-    background-size: 50% 100%;
-    animation: wave 25s linear infinite;
-}
-
-.wave:nth-child(2) {
-    opacity: 0.5;
-    animation-duration: 30s;
-    animation-direction: reverse;
-}
-
-.wave:nth-child(3) {
-    opacity: 0.3;
-    animation-duration: 35s;
-}
-
-@keyframes wave {
-    0% {
-        transform: translateX(0);
-    }
-    100% {
-        transform: translateX(-50%);
-    }
+    display: none !important;
 }
 
 .auth-container {
@@ -163,20 +29,18 @@ body {
     align-items: center;
     justify-content: center;
     padding: 20px;
-    position: relative;
-    z-index: 1;
+    background: #f7f7fa;
 }
 
 .auth-card {
-    background: rgba(213, 229, 242, 0.98);
-    backdrop-filter: blur(20px);
-    border-radius: 24px;
-    padding: 50px 40px;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+    background: #fff;
+    border-radius: 0 !important;
+    padding: 40px 32px;
+    box-shadow: 0 4px 24px rgba(40,44,52,0.08);
+    border: 1px solid #e2e2e2;
+    max-width: 520px;
     width: 100%;
-    max-width: 440px;
     animation: slideIn 0.6s ease-out;
-    border: 2px solid rgba(217, 214, 169, 0.3);
 }
 
 @keyframes slideIn {
@@ -194,12 +58,10 @@ body {
     margin: 0 0 35px 0;
     font-size: 32px;
     font-weight: 700;
-    color: #59433B;
+    color: #2d3748;
     text-align: center;
-    background: linear-gradient(135deg, #03658C 0%, #03658C 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    background: none;
+    -webkit-text-fill-color: unset;
     animation: fadeIn 0.8s ease-out 0.2s both;
 }
 
@@ -244,13 +106,13 @@ body {
 .form-group input {
     width: 100%;
     padding: 14px 16px;
-    border: 2px solid #D9D6A9;
+    border: 2px solid #e2e2e2;
     border-radius: 12px;
     font-size: 15px;
     transition: all 0.3s ease;
-    background: white;
+    background: #fff;
     position: relative;
-    color: #59433B;
+    color: #222;
 }
 
 .form-group input::placeholder {
@@ -259,8 +121,8 @@ body {
 
 .form-group input:focus {
     outline: none;
-    border-color: #03658C;
-    box-shadow: 0 0 0 4px rgba(3, 101, 140, 0.15);
+    border-color: #2d3748;
+    box-shadow: 0 0 0 2px #2d374822;
     transform: translateY(-2px);
 }
 
@@ -321,9 +183,10 @@ body {
 }
 
 .error-message {
-    color: #03658C;
-    background: linear-gradient(135deg, rgba(140, 63, 91, 0.1) 0%, rgba(140, 63, 91, 0.15) 100%);
-    border-left: 4px solid #03658C;
+    color: #b71c1c;
+    background: #fbeaea;
+    border-left: 4px solid #b71c1c;
+    border-radius: 0 !important;
 }
 
 .error-message:not(:empty) {
@@ -331,9 +194,10 @@ body {
 }
 
 .success-message {
-    color: #03658C;
-    background: linear-gradient(135deg, rgba(3, 101, 140, 0.1) 0%, rgba(3, 101, 140, 0.15) 100%);
-    border-left: 4px solid #03658C;
+    color: #2d3748;
+    background: #eafbf2;
+    border-left: 4px solid #2d3748;
+    border-radius: 0 !important;
 }
 
 .success-message:not(:empty) {
@@ -343,40 +207,20 @@ body {
 .auth-btn {
     width: 100%;
     padding: 16px;
-    background: linear-gradient(135deg, #03658C 0%, #03658C 100%);
-    background-size: 200% 200%;
-    color: #D5E5F2;
-    border: none;
-    border-radius: 12px;
-    font-size: 16px;
+    background: #2d3748;
+    color: #fff;
+    border-radius: 0 !important;
     font-weight: 600;
-    cursor: pointer;
-    transition: all 0.3s ease;
+    box-shadow: none;
+    border: none;
+    transition: background 0.2s;
     position: relative;
     overflow: hidden;
     animation: fadeIn 0.8s ease-out 0.7s both;
-    box-shadow: 0 4px 15px rgba(3, 101, 140, 0.3);
-}
-
-.auth-btn::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: -100%;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(213, 229, 242, 0.3), transparent);
-    transition: left 0.5s ease;
-}
-
-.auth-btn:hover::before {
-    left: 100%;
 }
 
 .auth-btn:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 10px 25px rgba(3, 101, 140, 0.5);
-    background-position: 100% 0;
+    background: #1a202c;
 }
 
 .auth-btn:active {
@@ -518,4 +362,26 @@ body {
     cursor: pointer;
     user-select: none;
     color: #59433B;
+}
+
+/* Make all edges sharp */
+*,
+*::before,
+*::after {
+  border-radius: 0 !important;
+}
+
+/* Ensure common UI components are square */
+.auth-card,
+.auth-btn,
+.form-group input,
+.form-group select,
+.form-group textarea,
+.condition-card,
+.exercise-tile,
+.dashboard-tile,
+.particle,
+.user-header,
+.logout-btn {
+  border-radius: 0 !important;
 }

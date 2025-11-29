@@ -26,7 +26,8 @@ from auth import (
     profile_required,
     save_profile,
     update_profile,
-    get_profile
+    get_profile,
+    load_profiles
 )
 
 app = Flask(
@@ -143,7 +144,7 @@ def save_exercise_analysis():
     req = request.get_json()
     exercise_name = req.get("name", "")
     analysis_file = req.get("analysis_file", "")
-
+    
     data = load_user_exercises()
     exercises = data.get(user_id, [])
     for ex in exercises:
@@ -162,7 +163,7 @@ def save_exercise_analysis():
     data[user_id] = exercises
     save_user_exercises(data)
     return jsonify({"success": True})
-
+    
 import threading
 
 def background_analysis(user_id, exercise_name, pose_data):
@@ -218,9 +219,18 @@ def api_select_analysis():
     session["selected_analysis_date"] = req.get("performed_at", "")
     return jsonify({"success": True})
 
+@app.route("/full_dashboard")
+@login_required
+def full_dashboard():
+    # Clear doctor view if patient is viewing their own dashboard
+    session.pop("doctor_view_patient", None)
+    return render_template("full_dashboard.html")
+
 @app.route("/exercise_analysis")
 @login_required
 def exercise_analysis():
+    # Clear doctor view if patient is viewing their own analysis
+    session.pop("doctor_view_patient", None)
     return render_template("exercise_analysis.html")
 
 @app.route("/api/analysis_data")
@@ -236,21 +246,56 @@ def api_analysis_data():
         return jsonify({"error": "Analysis file not found"}), 404
     with open(analysis_path, "r") as f:
         analysis = json.load(f)
+
+    # Doctor view: regenerate analysis in third person
+    doctor_patient = session.get("doctor_view_patient")
+    if doctor_patient:
+        from webcam import _create_analysis_prompt, _attempt_generate, get_user_profile
+        # Load pose data for this analysis
+        raw_file = None
+        data = load_user_exercises()
+        exercises = data.get(doctor_patient, [])
+        for ex in exercises:
+            if "analysis_history" in ex:
+                for record in ex["analysis_history"]:
+                    if record.get("analysis_file") == analysis_file:
+                        raw_file = record.get("raw_file")
+                        break
+        if raw_file:
+            raw_path = os.path.join(JSON_DATA_FOLDER, raw_file)
+            if os.path.exists(raw_path):
+                with open(raw_path, "r") as f:
+                    pose_data = json.load(f)
+                patient_profile = get_user_profile(doctor_patient)
+                from webcam import _extract_movement_features
+                features = _extract_movement_features(pose_data)
+                prompt = _create_analysis_prompt(
+                    features, analysis_name, patient_profile=patient_profile, third_person=True
+                )
+                response = _attempt_generate([prompt])
+                import json as pyjson
+                try:
+                    json_start = response.text.find('{')
+                    json_end = response.text.rfind('}') + 1
+                    analysis_json = pyjson.loads(response.text[json_start:json_end])
+                except Exception:
+                    analysis_json = {
+                        "error": "Model did not return valid JSON.",
+                        "raw_response": response.text
+                    }
+                analysis = analysis_json
+
     return jsonify({
         "analysis": analysis,
         "exercise_name": analysis_name,
         "performed_at": performed_at
     })
 
-@app.route("/full_dashboard")
-@login_required
-def full_dashboard():
-    return render_template("full_dashboard.html")
-
 @app.route("/api/full_dashboard_data")
 @login_required
 def api_full_dashboard_data():
-    user_id = session["user_id"]
+    email = request.args.get("email")
+    user_id = email if email else session["user_id"]
     data = load_user_exercises()
     exercises = data.get(user_id, [])
     return jsonify({"exercises": exercises})
@@ -260,7 +305,15 @@ def api_full_dashboard_data():
 def exercise_progress_report():
     req = request.get_json()
     exercise_name = req.get("name", "")
-    user_id = session["user_id"]
+
+    doctor_patient = session.get("doctor_view_patient")
+    if doctor_patient:
+        user_id = doctor_patient
+        third_person = True
+    else:
+        user_id = session["user_id"]
+        third_person = False
+
     data = load_user_exercises()
     exercises = data.get(user_id, [])
     analysis_files = []
@@ -271,17 +324,19 @@ def exercise_progress_report():
     if not analysis_files:
         return jsonify({"error": "No analysis data found for this exercise."}), 404
 
-    # Progress report cache file
+    # Progress report cache file - include prompt style
     cache_dir = "progress_reports"
     os.makedirs(cache_dir, exist_ok=True)
-    cache_file = os.path.join(cache_dir, f"{user_id}_{exercise_name.replace(' ', '_')}.json")
+    cache_file = os.path.join(
+        cache_dir,
+        f"{user_id}_{exercise_name.replace(' ', '_')}_{'doctor' if third_person else 'patient'}.json"
+    )
 
     # Check cache
     cached = None
     if os.path.exists(cache_file):
         with open(cache_file, "r") as f:
             cached = json.load(f)
-        # Check if cache is up to date
         cached_files = set(cached.get("analysis_files", []))
         if cached_files == set(analysis_files):
             return jsonify(cached["report"])
@@ -295,7 +350,8 @@ def exercise_progress_report():
                 analysis_data.append(json.load(f))
 
     # Build prompt for LLM
-    prompt = f"""You are an expert physiotherapy coach. Here are multiple AI analyses for the exercise '{exercise_name}'. Please summarize the user's progress over time, highlight improvements, recurring issues, and give encouragement. Be concise and clear.
+    if third_person:
+        prompt = f"""You are an expert physiotherapy coach. Here are multiple AI analyses for the exercise '{exercise_name}' performed by a patient. Please summarize the patient's progress over time, highlight improvements, recurring issues, and give encouragement. Use third person ("they", "the patient") in your feedback. Always refer to the patient in third person (never use 'you' or 'your'). Be concise and clear.
 
 Analysis history:
 {json.dumps(analysis_data, indent=2)}
@@ -313,6 +369,26 @@ Return your answer as:
   }}
 }}
 """
+    else:
+        prompt = f"""You are an expert physiotherapy coach. Here are multiple AI analyses for the exercise '{exercise_name}'. Please summarize the user's progress over time, highlight improvements, recurring issues, and give encouragement. Be concise and clear.
+
+Analysis history:
+{json.dumps(analysis_data, indent=2)}
+
+Additionally, analyze the feedback and provide pie chart data as JSON showing the percentage distribution of feedback categories (e.g. 'good form', 'needs improvement', 'speed issues', 'consistency', etc). 
+Return your answer as:
+{{
+  "progress_report": "<short summary>",
+  "pie_chart_data": {{
+    "Good Form": <number>,
+    "Needs Improvement": <number>,
+    "Speed Issues": <number>,
+    "Consistency": <number>,
+    "Other": <number>
+  }}
+}}
+"""
+
     from webcam import gemini_model
     try:
         response = gemini_model.generate_content([prompt])
@@ -344,6 +420,58 @@ def get_hide_add_exercise():
     user_id = session["user_id"]
     data = load_hide_add_exercise()
     return jsonify({"hide": data.get(user_id, False)})
+
+@app.route("/api/raw_pose_data")
+@login_required
+def api_raw_pose_data():
+    analysis_file = session.get("selected_analysis_file", "")
+    user_id = session["user_id"]
+    # Find the raw_file from user_exercises.json
+    data = load_user_exercises()
+    exercises = data.get(user_id, [])
+    raw_file = None
+    for ex in exercises:
+        if "analysis_history" in ex:
+            for record in ex["analysis_history"]:
+                if record.get("analysis_file") == analysis_file:
+                    raw_file = record.get("raw_file")
+                    break
+    if not raw_file:
+        return jsonify({"error": "Raw pose data not found"}), 404
+    raw_path = os.path.join(JSON_DATA_FOLDER, raw_file)
+    if not os.path.exists(raw_path):
+        return jsonify({"error": "Raw file not found"}), 404
+    with open(raw_path, "r") as f:
+        pose_data = json.load(f)
+    return jsonify({"pose_data": pose_data})
+
+@app.route("/doctor")
+def doctor_dashboard():
+    return render_template("doctor_dashboard.html")
+
+@app.route("/api/all_patients")
+def api_all_patients():
+    profiles = load_profiles()
+    return jsonify({"patients": list(profiles.values())})
+
+@app.route("/doctor/patient/<email>")
+def doctor_patient_dashboard(email):
+    # Set session for doctor view
+    session["doctor_view_patient"] = email
+    return render_template("doctor_patient_dashboard.html")
+
+@app.route("/doctor/analysis/<email>/<analysis_file>")
+def doctor_analysis(email, analysis_file):
+    # Set doctor view session for this patient
+    session["doctor_view_patient"] = email
+    session["selected_analysis_file"] = analysis_file
+    # Optionally, you can also set selected_analysis_name and performed_at if you want
+    return render_template("doctor_analysis.html")
+
+@app.route("/api/doctor_view_patient")
+def api_doctor_view_patient():
+    email = session.get("doctor_view_patient")
+    return jsonify({"email": email})
 
 if __name__ == "__main__":
     os.makedirs(JSON_DATA_FOLDER, exist_ok=True)

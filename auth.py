@@ -31,11 +31,8 @@ def load_profiles():
     """Load patient profiles from JSON file"""
     if not os.path.exists(PROFILES_FILE):
         return {}
-    try:
-        with open(PROFILES_FILE, 'r') as f:
-            return json.load(f)
-    except:
-        return {}
+    with open(PROFILES_FILE, "r") as f:
+        return json.load(f)
 
 def save_profiles(profiles):
     """Save patient profiles to JSON file"""

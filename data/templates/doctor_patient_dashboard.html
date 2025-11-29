@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>Exercise History Dashboard - Medicare</title>
+    <title>Patient Exercise History - Medicare</title>
     <link
       rel="stylesheet"
       href="{{ url_for('static', filename='auth.css') }}"
@@ -94,13 +94,9 @@
     </style>
   </head>
   <body>
-    <div class="user-header">
-      <span id="welcomeMessage"></span>
-      <a href="/logout" class="logout-btn">Logout</a>
-    </div>
     <div class="dashboard-container">
       <div class="dashboard-list">
-        <h2>Your Exercises</h2>
+        <h2 id="patientTitle">Patient Exercises</h2>
         <div id="exerciseList"></div>
       </div>
       <div class="dashboard-content">
@@ -110,25 +106,35 @@
       </div>
     </div>
     <button
-      id="backToExerciseDashboardBtn"
+      id="backToDoctorBtn"
       class="auth-btn"
       style="margin: 32px auto 0 auto; display: block; max-width: 320px"
     >
-      Back to My Exercises
+      Back to All Patients
     </button>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
-      fetch("/api/user")
+      // Get patient email from URL
+      const email = decodeURIComponent(
+        window.location.pathname.split("/").pop()
+      );
+
+      // Fetch patient info and exercises
+      fetch("/api/all_patients")
         .then((r) => r.json())
         .then((data) => {
-          document.getElementById(
-            "welcomeMessage"
-          ).textContent = `Welcome, ${data.username}`;
+          const patient = data.patients.find((p) => p.email === email);
+          if (patient) {
+            document.getElementById(
+              "patientTitle"
+            ).textContent = `Exercise History for ${
+              patient.username || patient.email
+            }`;
+          }
         });
 
       let allExercises = [];
       let selectedExerciseIdx = null;
-      let selectedAnalysisIdx = null;
 
       function renderExerciseList() {
         const list = document.getElementById("exerciseList");
@@ -142,7 +148,6 @@
           div.textContent = displayName;
           div.onclick = function () {
             selectedExerciseIdx = idx;
-            selectedAnalysisIdx = null;
             renderExerciseList();
             renderExerciseDetails();
           };
@@ -178,53 +183,17 @@
             `;
             // View Analysis button
             tile.querySelector(".view-btn").onclick = function () {
-              // Fetch analysis and show in right panel
-              fetch("/api/select_analysis", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  analysis_file: record.analysis_file,
-                  name: ex.name,
-                  performed_at: record.performed_at,
-                }),
-              }).then(() => {
-                fetch("/api/analysis_data")
-                  .then((r) => r.json())
-                  .then((data) => {
-                    const resultDiv = tile.querySelector(
-                      `#analysisResult${idx}`
-                    );
-                    resultDiv.style.display = "block";
-                    tile.querySelector(`#progressResult${idx}`).style.display =
-                      "none";
-                    if (data.error) {
-                      resultDiv.innerHTML = `<div class="error">${data.error}</div>`;
-                      return;
-                    }
-                    const a = data.analysis;
-                    let html = "";
-                    html += `<strong>Form & Correctness:</strong> ${
-                      a.form_correctness || ""
-                    }<br><br>`;
-                    html += `<strong>Consistency:</strong> ${
-                      a.consistency || ""
-                    }<br><br>`;
-                    html += `<strong>Speed & Pacing:</strong> ${
-                      a.speed_pacing || ""
-                    }<br><br>`;
-                    html += `<strong>Corrective Feedback:</strong> ${
-                      a.corrective_feedback || ""
-                    }<br><br>`;
-                    html += `<strong>Overall Summary:</strong> ${
-                      a.overall_summary || ""
-                    }`;
-                    resultDiv.innerHTML = html;
-                  });
-              });
+              window.location.href = `/doctor/analysis/${encodeURIComponent(
+                email
+              )}/${encodeURIComponent(record.analysis_file)}`;
             };
             // Progress Report button
             tile.querySelector(".progress-btn").onclick = function () {
-              // Fetch progress report and show in right panel
+              const resultDiv = tile.querySelector(`#progressResult${idx}`);
+              resultDiv.style.display = "block";
+              tile.querySelector(`#analysisResult${idx}`).style.display =
+                "none";
+              resultDiv.innerHTML = `<div class="loader"></div> <span>Please wait, generating progress report...</span>`;
               fetch("/api/exercise_progress_report", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -232,10 +201,6 @@
               })
                 .then((r) => r.json())
                 .then((reportData) => {
-                  const resultDiv = tile.querySelector(`#progressResult${idx}`);
-                  resultDiv.style.display = "block";
-                  tile.querySelector(`#analysisResult${idx}`).style.display =
-                    "none";
                   resultDiv.innerHTML = reportData.error
                     ? `<div class="error">${reportData.error}</div>`
                     : `<div style="margin-bottom:20px;">${
@@ -303,7 +268,7 @@
         }
       }
 
-      fetch("/api/full_dashboard_data")
+      fetch("/api/full_dashboard_data?email=" + encodeURIComponent(email))
         .then((r) => r.json())
         .then((data) => {
           allExercises = data.exercises || [];
@@ -311,10 +276,9 @@
           renderExerciseDetails();
         });
 
-      document.getElementById("backToExerciseDashboardBtn").onclick =
-        function () {
-          window.location.href = "/exercise_dashboard";
-        };
+      document.getElementById("backToDoctorBtn").onclick = function () {
+        window.location.href = "/doctor";
+      };
     </script>
   </body>
 </html>
