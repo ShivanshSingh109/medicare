@@ -77,6 +77,10 @@ def profile_required(f):
         if 'user_id' not in session:
             return redirect(url_for('login_page'))
         
+        # Redirect doctor user to doctor dashboard
+        if session.get('username', '').lower() == 'doctor':
+            return redirect('/doctor')
+        
         # Check if profile exists
         profile = get_user_profile(session['user_id'])
         if not profile:
@@ -88,6 +92,9 @@ def profile_required(f):
 def login_page():
     """Render login page"""
     if 'user_id' in session:
+        # Redirect doctor to doctor dashboard
+        if session.get('username', '').lower() == 'doctor':
+            return redirect('/doctor')
         return redirect(url_for('index'))
     return render_template("login.html")
 
@@ -101,6 +108,10 @@ def profile_setup_page():
     """Render profile setup page"""
     if 'user_id' not in session:
         return redirect(url_for('login_page'))
+    
+    # Doctor doesn't need profile setup
+    if session.get('username', '').lower() == 'doctor':
+        return redirect('/doctor')
     
     # If profile already exists, redirect to main page
     profile = get_user_profile(session['user_id'])
@@ -289,6 +300,15 @@ def login():
     # Set session
     session['user_id'] = user_id
     session['username'] = user_data['username']
+    
+    # Check if username is "doctor" - redirect to doctor dashboard
+    if user_data['username'].lower() == 'doctor':
+        return jsonify({
+            "message": "Login successful",
+            "username": user_data['username'],
+            "has_profile": True,
+            "redirect": "/doctor"
+        }), 200
     
     # Check if profile exists
     profile = get_user_profile(user_id)

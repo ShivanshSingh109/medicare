@@ -46,9 +46,36 @@
         color: #444;
         margin-top: 4px;
       }
+      .user-header {
+        position: absolute;
+        top: 20px;
+        right: 30px;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+      .user-header span {
+        font-weight: 500;
+        color: #2d3748;
+      }
+      .logout-btn {
+        padding: 8px 18px;
+        background: #03658c;
+        color: #fff;
+        text-decoration: none;
+        font-weight: 500;
+        transition: background 0.2s;
+      }
+      .logout-btn:hover {
+        background: #024a66;
+      }
     </style>
   </head>
   <body>
+    <div class="user-header">
+      <span>Welcome, Doctor</span>
+      <a href="/logout" class="logout-btn">Logout</a>
+    </div>
     <div class="doctor-list-card">
       <h1>All Patients</h1>
       <div id="patientsList"></div>
